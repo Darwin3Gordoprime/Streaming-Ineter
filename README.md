@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # En Vivo
 
 Panel local de retransmisión para OBS Studio o una fuente RTMP compatible, con salidas RTMP múltiples y grabación MP4 automática.
@@ -98,3 +99,7 @@ La entrada predeterminada queda limitada a este equipo y sirve para OBS local. P
 - `data/`: clave de cifrado y configuración local. Está excluida de Git.
 
 El panel web solo escucha en `127.0.0.1:3000`. La entrada RTMP publica el puerto 1935 del equipo y usa una clave aleatoria larga. Las credenciales de las plataformas quedan cifradas en el volumen `data/`; protege ese directorio y conserva una copia de seguridad si la necesitas.
+=======
+# Streaming-Ineter
+Proyecto de app web para INETER de parte de los estudiantes de telemática
+>>>>>>> 2e0031bb223d96579bf60eae7c9cfa773e17f3b2
