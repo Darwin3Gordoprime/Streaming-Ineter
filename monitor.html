@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0d3e43" />
+  <title>Monitoreo técnico — INETER</title>
+  <link rel="icon" type="image/png" href="assets/ineter-logo.png" />
+  <link rel="stylesheet" href="monitor-dashboard.css" />
+  <link rel="stylesheet" href="monitoring.css" />
+  <link rel="stylesheet" href="monitor-operations.css?v=20261022-admin-create" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body class="monitor-app">
+  <aside class="monitor-sidebar">
+    <a class="monitor-brand" href="/#inicio"><img src="assets/ineter-logo.png" alt="" /><span>INETER <i>Monitoreo</i></span></a>
+    <div class="monitor-sidebar-label">CENTRO DE CONTROL</div>
+    <a class="monitor-side-active" href="#dashboard"><span>◉</span> Dashboard técnico</a>
+    <div class="monitor-side-label">PLATAFORMA</div>
+    <a href="/#streaming"><span>▶</span> Streaming</a>
+    <a href="/#alertas"><span>♧</span> Alertas</a>
+    <a href="/#videos"><span>▣</span> Biblioteca de videos</a>
+    <div class="monitor-sidebar-bottom"><span class="monitor-access-mark">●</span><div><b>Acceso restringido</b><small>Permiso exclusivo para monitoreo</small></div></div>
+  </aside>
+  <main class="monitor-main">
+    <header class="monitor-topbar"><div><span class="monitor-breadcrumb">INETER · NICARAGUA <span>/</span> CENTRO DE CONTROL</span><h1>Monitoreo técnico</h1></div><div class="monitor-top-actions"><span class="monitor-live-state" id="monitor-page-status">Inicia sesión para continuar</span><span class="monitor-account" id="monitor-account"></span><button class="monitor-return" id="monitor-logout" type="button" hidden>Cerrar sesión</button><a class="monitor-return" href="/#inicio">Volver a la plataforma ↗</a></div></header>
+    <div class="monitor-content">
+      <section id="monitor-access-wall" class="monitor-access-wall"><div class="monitor-access-icon">◉</div><p class="monitor-eyebrow">ACCESO PRIVADO · FIREBASE</p><h2 id="monitor-access-title">Iniciar sesión de monitoreo</h2><p id="monitor-access-message">Ingresa con una cuenta autorizada para abrir el centro de control. Esta sesión es independiente de tu sesión normal en INETER.</p><form id="monitor-login-form" class="monitor-login-form"><label for="monitor-login-email">Correo electrónico</label><input id="monitor-login-email" name="email" type="email" autocomplete="username" required placeholder="nombre@institucion.gob.ni" /><label for="monitor-login-password">Contraseña</label><input id="monitor-login-password" name="password" type="password" autocomplete="current-password" required /><p id="monitor-login-error" class="monitor-login-error" role="alert" hidden></p><button id="monitor-login-submit" class="monitor-primary-link" type="submit">Iniciar sesión</button></form><div class="monitor-admin-entry"><span>¿Necesitas crear otra cuenta administrativa?</span><p>Inicia sesión con la cuenta principal. El formulario de creación está restringido a esa cuenta.</p><a href="/monitor.html?action=create-admin">Crear cuenta administrativa <b aria-hidden="true">↗</b></a></div></section>
+      <section id="monitor-dashboard" hidden>
+        <div class="monitor-welcome"><div><span class="monitor-eyebrow">SESIÓN PRIVADA · ADMINISTRADOR DE MONITOREO</span><h2>Estado de la plataforma</h2><p>Datos del backend INETER y del equipo donde se ejecuta el servicio.</p></div><span class="monitor-refresh-label">Actualización automática cada 2.5 s</span></div>
+        <div class="monitor-private-note">Esta interfaz independiente está vinculada a INETER en vivo. El acceso permite consultar el monitoreo técnico; la cuenta se mantiene como usuario en la plataforma pública.</div>
+        <section class="monitor-control-hero" aria-label="Centro de operaciones INETER">
+          <div class="monitor-control-copy">
+            <span class="monitor-control-kicker"><i></i> CENTRO DE OPERACIONES · INETER</span>
+            <h2>Todo el sistema,<br />en una sola vista.</h2>
+            <p>Supervisión del servidor, la red, el equipo y las transmisiones institucionales.</p>
+            <div class="monitor-control-status"><span id="monitor-hero-state">CONECTANDO CON EL SERVIDOR</span><small>Lecturas automáticas cada 2.5 segundos</small></div>
+          </div>
+          <div class="monitor-screen-wall" aria-hidden="true">
+            <div class="monitor-screen monitor-screen-main">
+              <div class="monitor-screen-head"><span>VISTA REPRESENTATIVA</span><b>● INETER</b></div>
+              <svg viewBox="0 0 520 170" preserveAspectRatio="none"><path class="screen-gridline" d="M0 35H520M0 75H520M0 115H520M0 155H520"/><path class="screen-line screen-line-a" d="M0 125 C34 122 42 95 75 104 S120 125 152 82 S205 108 244 70 S291 90 325 52 S368 78 405 45 S452 67 520 20"/><path class="screen-line screen-line-b" d="M0 145 C52 136 55 150 100 131 S165 142 205 118 S268 132 300 105 S365 119 405 94 S475 110 520 82"/></svg>
+              <div class="monitor-screen-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+            <div class="monitor-screen-stack">
+              <div class="monitor-screen monitor-screen-mini"><div class="monitor-screen-head"><span>CPU</span><b>CORE</b></div><div class="monitor-gauges"><i></i><i></i><i></i></div><div class="monitor-screen-wave"></div></div>
+              <div class="monitor-screen monitor-screen-mini"><div class="monitor-screen-head"><span>MEMORIA</span><b>RAM</b></div><div class="monitor-mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+            </div>
+            <div class="monitor-screen monitor-screen-foot"><span>OBS STUDIO</span><b>SEÑAL · SERVIDOR · PLATAFORMAS</b><i></i></div>
+          </div>
+          <span class="monitor-hero-corner monitor-hero-corner-a"></span><span class="monitor-hero-corner monitor-hero-corner-b"></span>
+        </section>
+        <div class="monitor-admin-overview">
+          <article class="monitor-metric"><span>USUARIOS ACTIVOS</span><strong id="monitor-active-users">—</strong><small id="monitor-active-users-updated">Últimos 90 segundos</small></article>
+          <article class="monitor-metric"><span>AVISOS DIFUNDIDOS</span><strong id="monitor-alert-count">—</strong><small id="monitor-alert-updated">Historial de la plataforma</small></article>
+          <article class="monitor-metric"><span>SESIONES DE STREAMING</span><strong id="monitor-stream-count">—</strong><small id="monitor-stream-duration">Duración acumulada: —</small></article>
+          <article class="monitor-metric"><span>ALMACENAMIENTO DE VIDEO</span><strong id="monitor-recording-bytes">—</strong><small id="monitor-recording-count">—</small></article>
+        </div>
+        <div class="monitor-detail-grid">
+          <article class="monitor-detail-card"><h3 id="monitor-climate-title">Condiciones meteorológicas · Managua</h3><p class="monitor-climate-reading" id="monitor-climate-reading">Consultando datos de referencia…</p><small id="monitor-climate-updated">Fuente: Open-Meteo · verifica con INETER.</small><a href="https://servmet.ineter.gob.ni/Pronostico/" target="_blank" rel="noopener">Ver pronóstico oficial de INETER ↗</a></article>
+          <article class="monitor-detail-card"><h3>Últimos avisos difundidos</h3><p class="monitor-last-update">Avisos publicados en esta plataforma.</p><div id="monitor-recent-alerts" class="monitor-destination-list"><p class="empty-recordings">Cargando…</p></div></article>
+          <article class="monitor-detail-card"><h3>Personas conectadas recientemente</h3><p class="monitor-last-update" id="monitor-active-users-updated-copy">Actividad recibida en los últimos 90 segundos.</p><div id="monitor-active-user-list" class="monitor-destination-list"><p class="empty-recordings">Esperando actividad…</p></div></article>
+          <article class="monitor-detail-card"><h3>Salud del servidor</h3><dl><dt>Tiempo encendido</dt><dd id="monitor-server-uptime">—</dd><dt>Memoria heap</dt><dd id="monitor-server-heap">—</dd><dt>Hora de medición</dt><dd id="monitor-server-sampled">—</dd></dl></article>
+        </div>
+        <div class="monitor-metrics-grid">
+          <article class="monitor-metric"><span>↑ SUBIDA</span><strong id="monitor-upload">— Mbps</strong><small id="monitor-upload-total">Total enviado: —</small></article>
+          <article class="monitor-metric"><span>↓ BAJADA</span><strong id="monitor-download">— Mbps</strong><small id="monitor-download-total">Total recibido: —</small></article>
+          <article class="monitor-metric"><span>LATENCIA A INTERNET</span><strong id="monitor-latency">Midiendo…</strong><small id="monitor-latency-time">TCP a Cloudflare · 1.1.1.1</small></article>
+          <article class="monitor-metric"><span>USO DE CPU</span><strong id="monitor-cpu">Midiendo…</strong><small id="monitor-cpu-model">Procesador —</small></article>
+        </div>
+        <article class="monitor-chart-card"><div class="monitor-chart-heading"><div><b>Tráfico de red</b><small>Últimas lecturas durante la supervisión</small></div><div><span class="monitor-legend-up">↑ Subida</span><span class="monitor-legend-down">↓ Bajada</span></div></div><svg class="monitor-chart" id="monitor-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Gráfico de velocidad de red"><path class="monitor-chart-up" id="monitor-chart-up"/><path class="monitor-chart-down" id="monitor-chart-down"/></svg><div class="monitor-chart-axis"><span>Lecturas anteriores</span><span>Actual</span></div></article>
+        <div class="monitor-detail-grid">
+          <article class="monitor-detail-card monitor-device-card"><div class="monitor-device-heading"><div><h3>Rendimiento del equipo</h3><p>Uso en tiempo real, similar al Administrador de tareas.</p></div><span class="monitor-device-live">EN VIVO</span></div>
+            <div class="monitor-resource-grid">
+              <div class="monitor-resource-item"><div class="monitor-resource-top"><span>Procesador</span><strong id="monitor-task-cpu">—</strong></div><div class="monitor-resource-bar" role="progressbar" aria-label="Uso de CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="monitor-task-cpu-bar"></i></div><small id="monitor-task-cpu-detail">Midiendo procesador…</small></div>
+              <div class="monitor-resource-item"><div class="monitor-resource-top"><span>Memoria RAM</span><strong id="monitor-task-ram">—</strong></div><div class="monitor-resource-bar ram" role="progressbar" aria-label="Uso de memoria RAM" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="monitor-task-ram-bar"></i></div><small id="monitor-task-ram-detail">Midiendo memoria…</small></div>
+              <div class="monitor-resource-item"><div class="monitor-resource-top"><span>Disco de grabaciones</span><strong id="monitor-task-disk">—</strong></div><div class="monitor-resource-bar disk" role="progressbar" aria-label="Uso del disco de grabaciones" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="monitor-task-disk-bar"></i></div><small id="monitor-task-disk-detail">Consultando unidad…</small></div>
+            </div>
+            <dl><dt>Equipo</dt><dd id="monitor-host">—</dd><dt>Sistema operativo</dt><dd id="monitor-os">—</dd><dt>Arquitectura / Node</dt><dd id="monitor-runtime">—</dd><dt>Procesador</dt><dd id="monitor-device-cpu">—</dd><dt>RAM total · usada · libre</dt><dd id="monitor-memory">—</dd><dt>Memoria del backend INETER</dt><dd id="monitor-process-memory">—</dd><dt>Unidad de grabaciones libre / total</dt><dd id="monitor-disk">—</dd><dt>Interfaces de red</dt><dd id="monitor-interfaces">—</dd></dl>
+          </article>
+          <article class="monitor-detail-card"><h3>OBS y plataformas</h3><div class="monitor-destination-list" id="monitor-destinations"><p class="empty-recordings">Esperando datos…</p></div><p class="monitor-last-update" id="monitor-updated">Última lectura: —</p><p class="monitor-error" id="monitor-error" role="status"></p></article>
+        </div>
+        <div id="monitor-admin-create-notice" class="monitor-admin-create-notice" hidden>Solo la cuenta administradora principal puede crear otra cuenta administrativa.</div>
+        <section class="monitor-detail-card monitor-admin-create" id="monitor-admin-create" hidden><h3>Administrar accesos</h3><p class="monitor-last-update">Crea una cuenta administradora de monitoreo. Solo la cuenta administradora principal puede usar esta función.</p><form id="monitor-create-admin-form" class="monitor-create-admin-form"><label for="monitor-new-admin-name">Nombre</label><input id="monitor-new-admin-name" name="name" maxlength="80" autocomplete="name" required /><label for="monitor-new-admin-email">Correo electrónico</label><input id="monitor-new-admin-email" name="email" type="email" autocomplete="email" required /><label for="monitor-new-admin-password">Contraseña inicial</label><input id="monitor-new-admin-password" name="password" type="password" minlength="10" autocomplete="new-password" required /><label for="monitor-new-admin-confirm">Confirmar contraseña</label><input id="monitor-new-admin-confirm" name="confirmPassword" type="password" minlength="10" autocomplete="new-password" required /><p id="monitor-create-admin-message" class="monitor-login-error" role="status" hidden></p><button id="monitor-create-admin-submit" class="monitor-primary-link" type="submit">Crear administrador</button></form></section>
+      </section>
+    </div>
+  </main>
+  <script src="monitor-dashboard.js?v=20261022-admin-create" defer></script>
+</body>
+</html>

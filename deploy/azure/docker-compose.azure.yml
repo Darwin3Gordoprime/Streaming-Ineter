@@ -1,0 +1,34 @@
+services:
+  mediamtx:
+    ports:
+      - "1936:1936"
+    volumes:
+      - ./deploy/azure/mediamtx.yml:/mediamtx.yml:ro
+      - /etc/letsencrypt/live/${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}/fullchain.pem:/run/secrets/rtmps/fullchain.pem:ro
+      - /etc/letsencrypt/live/${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}/privkey.pem:/run/secrets/rtmps/privkey.pem:ro
+
+  app:
+    environment:
+      TRUST_PROXY: "1"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN in the project .env}
+      STREAM_DOMAIN: ${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/azure/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CERTBOT_WEBROOT:-/var/lib/ineter/acme-challenge}:/var/www/certbot:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

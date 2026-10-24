@@ -1,0 +1,12 @@
+{$APP_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy app:3000
+}
+
+http://{$STREAM_DOMAIN} {
+    handle /.well-known/acme-challenge/* {
+        root * /var/www/certbot
+        file_server
+    }
+    respond 404
+}

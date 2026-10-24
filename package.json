@@ -1,0 +1,16 @@
+{
+  "name": "ineter-en-vivo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend local de En Vivo INETER con integración opcional de Firebase Admin",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "docker compose up --build",
+    "start:detached": "docker compose up --build -d",
+    "stop": "docker compose down",
+    "start:backend": "node server.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0"
+  }
+}

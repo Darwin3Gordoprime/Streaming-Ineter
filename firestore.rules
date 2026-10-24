@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /publicAlerts/{alertId} {
+      allow read: if true;
+      // El servidor publica solo avisos aprobados por un administrador.
+      // Admin SDK accede con credenciales privadas y omite estas reglas.
+      allow write: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

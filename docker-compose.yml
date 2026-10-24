@@ -1,0 +1,48 @@
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.2
+    restart: unless-stopped
+    ports:
+      - "${RTMP_BIND_ADDRESS:-127.0.0.1}:1935:1935"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ${RECORDINGS_PATH:-./recordings}:/recordings
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:3000:3000"
+      - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:3012:3012"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PORT: "3000"
+      ADMIN_PORT: "3012"
+      BIND_ADDRESS: 0.0.0.0
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      PUBLIC_RTMP_URL: ${PUBLIC_RTMP_URL:-rtmp://127.0.0.1:1935/live}
+      OBS_INGEST_SERVER: ${OBS_INGEST_SERVER:-rtmp://127.0.0.1:1935/live}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      ALERT_FROM_EMAIL: ${ALERT_FROM_EMAIL:-}
+      FIREBASE_API_KEY: ${FIREBASE_API_KEY:-}
+      FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_APP_ID: ${FIREBASE_APP_ID:-}
+      FIREBASE_MESSAGING_SENDER_ID: ${FIREBASE_MESSAGING_SENDER_ID:-}
+      FIREBASE_VAPID_KEY: ${FIREBASE_VAPID_KEY:-}
+      INETER_INITIAL_ADMIN_EMAIL: ${INETER_INITIAL_ADMIN_EMAIL:-}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase-service-account.json
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_RTSP_BASE: rtsp://mediamtx:8554
+      OBS_WS_HOST: host.docker.internal
+    volumes:
+      - ./data:/app/data
+      - ${RECORDINGS_PATH:-./recordings}:/app/recordings
+      - type: bind
+        source: ${FIREBASE_SERVICE_ACCOUNT_FILE:-./firebase-service-account.json}
+        target: /run/secrets/firebase-service-account.json
+        read_only: true
+

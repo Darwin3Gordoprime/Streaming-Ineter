@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#123b57" />
+  <title>Administración | INETER en vivo</title>
+  <link rel="icon" type="image/png" href="assets/ineter-logo.png" />
+  <link rel="stylesheet" href="admin-dashboard.css" />
+  <link rel="stylesheet" href="admin-monitor.css" />
+</head>
+<body>
+  <div id="access-wall" class="access-wall" hidden>
+    <section class="access-card">
+      <img src="assets/ineter-logo.png" alt="Logo de INETER" />
+      <p class="eyebrow">ACCESO PRIVADO · INETER</p>
+      <h1 id="access-title">Panel de administración</h1>
+      <p id="access-message">Inicia sesión aquí con la cuenta administradora para abrir este panel independiente.</p>
+      <form id="admin-login-form" class="admin-login-form">
+        <label>Correo electrónico<input id="admin-login-email" name="email" type="email" autocomplete="username" required /></label>
+        <label>Contraseña<input id="admin-login-password" name="password" type="password" autocomplete="current-password" required /></label>
+        <p id="admin-login-error" class="admin-login-error" role="alert" hidden></p>
+        <button class="button primary" id="admin-login-submit" type="submit">Iniciar sesión en administración</button>
+      </form>
+      <a class="back-link" href="/" data-main-app="/">Volver a INETER en vivo</a>
+    </section>
+  </div>
+
+  <div id="admin-shell" class="admin-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/" data-main-app="/"><img src="assets/ineter-logo.png" alt="" /><span>INETER <em>en vivo</em><small>Centro de administración</small></span></a>
+      <div class="side-status"><i></i><span>Sesión principal verificada</span></div>
+      <nav class="admin-nav" aria-label="Administración">
+        <button class="active" data-section="overview"><b>⌂</b> Resumen</button>
+        <button data-section="system"><b>▥</b> Equipo en vivo</button>
+        <button data-section="accounts"><b>♙</b> Cuentas y roles</button>
+        <button data-section="alerts"><b>♧</b> Alertas y difusión</button>
+        <button data-section="requests"><b>◉</b> Solicitudes de acceso</button>
+        <button data-section="videos"><b>▶</b> Biblioteca de videos</button>
+        <button data-section="reports"><b>▤</b> Reportes agrícolas</button>
+      </nav>
+      <div class="sidebar-bottom"><a href="/" data-main-app="/">← Volver a la aplicación</a><small>Los cambios de roles se guardan en Firebase.</small></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar"><div><span class="eyebrow">INETER · NICARAGUA</span><h1 id="page-title">Resumen administrativo</h1></div><div class="account-chip"><span class="avatar" id="admin-avatar">IN</span><span><b id="admin-name">Administrador</b><small id="admin-email"></small></span><button id="admin-signout" title="Cerrar sesión" aria-label="Cerrar sesión">↪</button></div></header>
+      <div id="page-error" class="notice error" role="alert" hidden></div>
+      <section class="admin-section active" data-panel="overview">
+        <div class="welcome-banner"><div><p class="eyebrow">CENTRO DE CONTROL</p><h2>Administración de INETER en vivo</h2><p>Gestiona las cuentas registradas y las herramientas de la plataforma desde un solo lugar.</p></div><div class="banner-mark">INETER<br/><small>NICARAGUA</small></div></div>
+        <div class="stat-grid"><article class="stat-card"><span>Cuentas registradas</span><b id="stat-users">—</b><small>Firebase Authentication</small></article><article class="stat-card"><span>Usuarios conectados</span><b id="stat-active">—</b><small>Sesiones recientes</small></article><article class="stat-card"><span>Espectadores en vivo</span><b id="stat-viewers">—</b><small>En la sección Streaming</small></article><article class="stat-card"><span>Me gusta en vivo</span><b id="stat-likes">—</b><small>Transmisión actual</small></article><article class="stat-card"><span>Avisos publicados</span><b id="stat-alerts">—</b><small>Difusión institucional</small></article><article class="stat-card"><span>Solicitudes pendientes</span><b id="stat-requests">—</b><small>Permisos de monitoreo</small></article></div>
+        <div class="content-grid"><article class="card"><div class="card-heading"><div><span class="eyebrow">ACCESO</span><h2>Roles de cuenta</h2></div><button class="button secondary" data-open="accounts">Administrar cuentas</button></div><p>Las cuentas pueden tener rol de usuario o soporte. La cuenta administradora principal está protegida y el acceso de monitoreo se asigna mediante solicitudes.</p><div class="role-legend"><span><i class="role-dot user"></i>Usuario</span><span><i class="role-dot support"></i>Soporte</span><span><i class="role-dot admin"></i>Administración protegida</span></div></article><article class="card"><div class="card-heading"><div><span class="eyebrow">ENLACES</span><h2>Herramientas de INETER</h2></div></div><button class="quick-link" data-open="system">Ver rendimiento del equipo <span>↗</span></button><a class="quick-link" href="/monitor.html" data-main-app="/monitor.html">Abrir monitoreo técnico <span>↗</span></a><a class="quick-link" href="/#streaming" data-main-app="/#streaming">Abrir estudio de streaming <span>↗</span></a><a class="quick-link" href="/#alertas" data-main-app="/#alertas">Ver avisos publicados <span>↗</span></a></article></div>
+      </section>
+
+      <section class="admin-section" data-panel="system">
+        <div class="section-intro"><div><span class="eyebrow">RECURSOS DEL SERVIDOR</span><h2>Rendimiento del equipo</h2><p>Lecturas reales del equipo donde se ejecuta el backend, actualizadas cada 2.5 segundos.</p></div><span id="system-live-state" class="system-live-badge"><i></i> Consultando</span></div>
+        <div class="system-resource-grid">
+          <article class="card resource-card"><div class="resource-title"><span>Procesador</span><b id="system-cpu-value">—</b></div><div class="resource-track"><i id="system-cpu-bar"></i></div><small id="system-cpu-detail">Esperando lectura…</small></article>
+          <article class="card resource-card"><div class="resource-title"><span>Memoria RAM</span><b id="system-ram-value">—</b></div><div class="resource-track ram"><i id="system-ram-bar"></i></div><small id="system-ram-detail">Esperando lectura…</small></article>
+          <article class="card resource-card"><div class="resource-title"><span>Disco de grabaciones</span><b id="system-disk-value">—</b></div><div class="resource-track disk"><i id="system-disk-bar"></i></div><small id="system-disk-detail">Esperando lectura…</small></article>
+          <article class="card resource-card"><div class="resource-title"><span>Proceso backend</span><b id="system-process-value">—</b></div><small id="system-process-detail">Memoria del proceso INETER</small></article>
+        </div>
+        <div class="system-network-grid"><article class="card network-card"><div class="card-heading"><div><span class="eyebrow">RED DEL EQUIPO · ACTUALIZACIÓN CADA 2.5 S</span><h3>Estadísticas de conexión a Internet</h3></div><span id="system-network-source" class="pill">—</span></div><div class="network-speed-row network-speed-cards"><div><small>↑ SUBIDA ACTUAL</small><b id="system-upload">— Mbps</b><span>Promedio <strong id="system-upload-avg">—</strong> · Pico <strong id="system-upload-peak">—</strong></span></div><div><small>↓ BAJADA ACTUAL</small><b id="system-download">— Mbps</b><span>Promedio <strong id="system-download-avg">—</strong> · Pico <strong id="system-download-peak">—</strong></span></div><div><small>LATENCIA TCP A INTERNET</small><b id="system-latency">Midiendo…</b><span>Promedio <strong id="system-latency-avg">—</strong> · Mínima <strong id="system-latency-min">—</strong></span></div></div><div class="network-chart-heading"><b>Tráfico de red en tiempo real</b><span><i class="legend-up"></i> Subida <i class="legend-down"></i> Bajada</span></div><svg class="system-network-chart" viewBox="0 0 100 50" preserveAspectRatio="none" role="img" aria-label="Historial reciente de velocidad de subida y bajada"><path id="system-chart-upload" class="chart-upload"/><path id="system-chart-download" class="chart-download"/></svg><div class="network-totals"><span id="system-upload-total">Enviado total: —</span><span id="system-download-total">Recibido total: —</span></div><p class="system-note" id="system-network-note">La velocidad representa el tráfico total de red del equipo donde corre el servicio.</p><small id="system-interfaces">Interfaces: —</small></article>
+          <article class="card system-connection-card"><div class="card-heading"><div><span class="eyebrow">TRANSMISIÓN</span><h3>OBS y destinos</h3></div><span id="system-stream-state" class="pill">Sin emisión</span></div><div id="system-obs-status" class="system-service-row"><span>OBS Studio</span><b>Consultando…</b></div><div id="system-destinations" class="system-destinations"></div><div class="system-server-facts"><div><small>Tiempo encendido</small><b id="system-uptime">—</b></div><div><small>Sesiones streaming</small><b id="system-stream-count">—</b></div><div><small>Usuarios activos</small><b id="system-active-users">—</b></div><div><small>Grabaciones</small><b id="system-recordings">—</b></div></div></article></div>
+        <article class="card system-device-card"><div class="card-heading"><div><span class="eyebrow">ESPECIFICACIONES</span><h3>Información del dispositivo servidor</h3></div><small id="system-sampled-at">Última lectura: —</small></div><dl class="system-device-list"><div><dt>Nombre del equipo</dt><dd id="system-host">—</dd></div><div><dt>Sistema operativo</dt><dd id="system-os">—</dd></div><div><dt>Arquitectura / Runtime</dt><dd id="system-runtime">—</dd></div><div><dt>Procesador</dt><dd id="system-cpu-model">—</dd></div><div><dt>Núcleos lógicos</dt><dd id="system-cpu-cores">—</dd></div><div><dt>Memoria total / libre</dt><dd id="system-memory-summary">—</dd></div><div><dt>Disco de grabaciones</dt><dd id="system-disk-summary">—</dd></div><div><dt>Memoria heap del servidor</dt><dd id="system-heap">—</dd></div></dl></article>
+        <article class="card table-card system-process-card"><div class="card-heading"><div><span class="eyebrow">ADMINISTRADOR DE TAREAS</span><h3>Procesos activos del equipo</h3><p id="system-process-scope">Lectura real del sistema operativo · se actualiza cada 2.5 segundos</p></div><span id="system-process-count" class="pill">Leyendo…</span></div><div class="table-scroll"><table><thead><tr><th>PROCESO</th><th>PID</th><th>CPU</th><th>MEMORIA</th></tr></thead><tbody id="system-process-table"><tr><td colspan="4">Recopilando procesos…</td></tr></tbody></table></div><p class="system-note">Por seguridad y aislamiento, se muestran los procesos visibles para el servidor. Si se ejecuta en Docker, el sistema puede limitar la vista a los procesos del contenedor.</p></article>
+      </section>
+
+      <section class="admin-section" data-panel="accounts">
+        <div class="section-intro"><div><span class="eyebrow">FIREBASE AUTHENTICATION</span><h2>Cuentas y roles</h2><p>Directorio sincronizado con las cuentas registradas en Firebase, incluso si aún no han iniciado sesión en la app.</p></div><button class="button secondary" id="refresh-users">↻ Actualizar lista</button></div>
+        <article class="card create-card"><div class="card-heading"><div><h3>Crear cuenta de usuario o soporte</h3><p>La cuenta nueva se crea directamente en Firebase Authentication.</p></div></div><form id="create-user-form" class="create-user-form"><label>Nombre<input name="name" minlength="2" maxlength="80" required autocomplete="name" /></label><label>Correo electrónico<input name="email" type="email" maxlength="254" required autocomplete="email" /></label><label>Contraseña inicial<input name="password" type="password" minlength="12" maxlength="128" required autocomplete="new-password" /></label><label>Rol<select name="role"><option value="user">Usuario</option><option value="support">Soporte</option></select></label><button class="button primary" id="create-user-submit">Crear cuenta</button></form><p class="form-message" id="create-user-message" role="status"></p></article>
+        <article class="card create-card"><div class="card-heading"><div><h3>Crear administrador de monitoreo</h3><p>Solo la cuenta administradora principal autorizada puede crear cuentas con este permiso. El rol solo da acceso al dashboard técnico.</p></div><span class="role-lock">PERMISO RESTRINGIDO</span></div><form id="create-monitor-admin-form" class="create-user-form"><label>Nombre<input name="name" minlength="2" maxlength="80" required autocomplete="name" /></label><label>Correo electrónico<input name="email" type="email" maxlength="254" required autocomplete="email" /></label><label>Contraseña inicial<input name="password" type="password" minlength="10" maxlength="128" required autocomplete="new-password" /></label><span></span><button class="button secondary" id="create-monitor-admin-submit">Crear administrador</button></form><p class="form-message" id="create-monitor-admin-message" role="status"></p></article>
+        <article class="card table-card"><div class="card-heading"><div><h3>Directorio de cuentas</h3><p id="user-count">Consultando Firebase…</p></div><input id="user-search" class="search-input" type="search" placeholder="Buscar nombre o correo" aria-label="Buscar cuentas" /></div><div class="table-scroll"><table><thead><tr><th>Cuenta</th><th>Estado</th><th>Rol</th><th>Registrada</th></tr></thead><tbody id="users-table"><tr><td colspan="4">Cargando cuentas…</td></tr></tbody></table></div></article>
+      </section>
+
+      <section class="admin-section" data-panel="alerts">
+        <div class="section-intro"><div><span class="eyebrow">DIFUSIÓN INSTITUCIONAL</span><h2>Alertas y avisos</h2><p>Publica avisos verificados. La app intenta difundirlos por correo y notificaciones habilitadas.</p></div><span class="pill" id="recipient-count">Destinatarios: —</span></div>
+        <article class="card"><form id="alert-form" class="alert-form"><label>Tipo de aviso<select name="category" required><option value="meteorologica">Meteorológica</option><option value="sismica">Sísmica</option><option value="volcanica">Volcánica</option><option value="tsunami">Tsunami</option><option value="hidrologica">Hidrológica</option><option value="otra">Otro aviso</option></select></label><label>Prioridad<select name="severity" required><option value="informativa">Informativa</option><option value="precaucion">Precaución</option><option value="urgente">Urgente</option></select></label><label class="wide">Título<input name="title" minlength="5" maxlength="140" required /></label><label>Zona o municipio<input name="location" maxlength="120" placeholder="Ej. Carazo" /></label><label>Fuente oficial<input name="sourceName" maxlength="80" value="INETER" required /></label><label class="wide">Enlace oficial de INETER<input name="sourceUrl" type="url" placeholder="https://www.ineter.gob.ni/…" required /></label><label class="wide">Información del aviso<textarea name="message" minlength="10" maxlength="3000" rows="4" required></textarea></label><label class="confirm wide"><input name="confirmedOfficial" type="checkbox" required /> Confirmo que la información fue verificada con una fuente oficial.</label><div class="wide form-actions"><button class="button primary" id="publish-alert">Publicar y difundir</button><span id="alert-message" class="form-message" role="status"></span></div></form></article>
+        <article class="card table-card"><div class="card-heading"><div><h3>Historial de avisos</h3><p>Estado de envío y publicación.</p></div><button class="button secondary" id="refresh-alerts">Actualizar</button></div><div id="alert-list" class="record-list">Cargando avisos…</div></article>
+      </section>
+
+      <section class="admin-section" data-panel="requests">
+        <div class="section-intro"><div><span class="eyebrow">CONTROL DE ACCESO</span><h2>Solicitudes de monitoreo</h2><p>Solo la cuenta administradora principal puede aprobar nuevos administradores de monitoreo.</p></div><button class="button secondary" id="refresh-requests">Actualizar</button></div><div id="request-permission" class="notice" hidden></div><div id="request-list" class="record-list card">Consultando solicitudes…</div>
+      </section>
+
+      <section class="admin-section" data-panel="videos">
+        <div class="section-intro"><div><span class="eyebrow">CONTENIDO INSTITUCIONAL</span><h2>Biblioteca de videos</h2><p>Publica una grabación MP4 en la biblioteca de videos bajo demanda de la app.</p></div></div><article class="card"><form id="video-form" class="video-form"><label>Título del video<input name="title" maxlength="100" required placeholder="Título para la biblioteca" /></label><label>Archivo MP4<input name="file" type="file" accept="video/mp4,.mp4" required /></label><p class="form-message">Tamaño máximo: 1 GB. El servidor procesa el archivo después de subirlo.</p><button class="button primary" id="upload-video">Subir video</button><progress id="upload-progress" max="100" value="0" hidden></progress><span id="video-message" class="form-message" role="status"></span></form></article></section>
+
+      <section class="admin-section" data-panel="reports"><div class="section-intro"><div><span class="eyebrow">ASESORÍA AGRÍCOLA</span><h2>Reportes agrícolas</h2><p>Respuestas enviadas por usuarios desde la guía de asesoría.</p></div><button class="button secondary" id="refresh-reports">Actualizar</button></div><div class="card table-card"><div class="table-scroll"><table><thead><tr><th>Fecha</th><th>Municipio</th><th>Cultivo</th><th>Condiciones</th><th>Resultado</th><th>Reportado por</th></tr></thead><tbody id="reports-table"><tr><td colspan="6">Cargando reportes…</td></tr></tbody></table></div></div></section>
+    </main>
+  </div>
+  <script src="admin-dashboard.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+.git
+*.log
+.env*
+data
+recordings
+node_modules
+tools
+auto.key
+auto.crt
+*-firebase-adminsdk-*.json
+firebase-service-account*.json
+.stream-integration-preview
+.zip-base
