@@ -1,0 +1,67 @@
+#cloud-config
+# Instala Docker Engine + Compose y prepara /opt/ineter en el primer arranque.
+#
+# Uso en Azure Portal:
+#   Crear VM -> pestaña "Avanzado" -> "Datos personalizados" (Custom data)
+#   Pega el contenido completo de este archivo.
+#
+# Uso con Azure CLI:
+#   az vm create ... --custom-data deploy/azure/cloud-init.yaml
+#
+# Si eliges otro usuario administrador, reemplaza "azureuser" en este archivo.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+
+write_files:
+  - path: /usr/local/sbin/install-docker.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+      export DEBIAN_FRONTEND=noninteractive
+
+      # Repositorio oficial de Docker para la versión de Debian detectada
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+
+      . /etc/os-release
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+
+      apt-get -o DPkg::Lock::Timeout=180 update
+      apt-get -o DPkg::Lock::Timeout=180 install -y \
+        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+      systemctl enable --now docker
+
+      # Swap de 2 GB: imprescindible en VM de 1 GB de RAM (ofertas gratuitas
+      # B1s / B2ats v2 / B2pts v2) para que ffmpeg no agote la memoria.
+      if [ ! -f /swapfile ]; then
+        fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        echo 'vm.swappiness=10' > /etc/sysctl.d/99-ineter-swap.conf
+        sysctl -p /etc/sysctl.d/99-ineter-swap.conf
+      fi
+
+      # Permite usar docker sin sudo al usuario administrador de Azure
+      if id azureuser >/dev/null 2>&1; then
+        usermod -aG docker azureuser
+        mkdir -p /opt/ineter
+        chown azureuser:azureuser /opt/ineter
+      fi
+
+runcmd:
+  - [ sh, /usr/local/sbin/install-docker.sh ]
+
+final_message: "cloud-init terminó en $UPTIME segundos. Docker y Compose ya están instalados."

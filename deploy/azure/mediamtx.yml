@@ -8,11 +8,24 @@ rtsp: yes
 rtspAddress: :8554
 api: yes
 apiAddress: :9997
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+  - user: any
+    pass:
+    ips: ["172.16.0.0/12"]
+    permissions:
+      - action: api
 record: yes
 recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
 recordFormat: fmp4
 recordPartDuration: 1s
-recordSegmentDuration: 24h
+recordSegmentDuration: 3h30m
 recordDeleteAfter: 0s
 paths:
   all_others:

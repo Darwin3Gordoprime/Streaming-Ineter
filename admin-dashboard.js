@@ -12,6 +12,10 @@ let usersCache = [];
 let accessRequestCanApprove = false;
 let currentAdmin = null;
 let systemBusy = false;
+let adminStreamState = null;
+let adminStreamBusy = false;
+let revealAdminIngestKey = false;
+let adminObsFormEdited = false;
 let adminFirebase = null;
 const systemNetworkHistory = [];
 function configureMainAppLinks() {
@@ -68,8 +72,11 @@ async function submitAdminLogin(event) {
     await boot();
   } catch (error) {
     const code = String(error.code || '');
-    const message = code.includes('invalid-credential') || code.includes('user-not-found') || code.includes('wrong-password')
+    const message = code.includes('invalid-credential') || code.includes('invalid-login-credentials') || code.includes('user-not-found') || code.includes('wrong-password')
       ? 'El correo o la contraseña no son correctos.'
+      : code.includes('unauthorized-domain') ? `Firebase no autoriza el dominio ${location.hostname}. Agrégalo a los dominios autorizados en Firebase Console.`
+      : code.includes('api-key-not-valid') ? 'La clave web de Firebase no es válida. Revisa la configuración del proyecto.'
+      : code.includes('user-disabled') ? 'Esta cuenta está deshabilitada en Firebase Authentication.'
       : code.includes('too-many-requests') ? 'Firebase bloqueó temporalmente los intentos. Espera y vuelve a probar.'
       : code.includes('network-request-failed') ? 'No se pudo conectar con Firebase. Revisa la conexión a Internet.'
       : error.message || 'No se pudo iniciar sesión.';
@@ -85,7 +92,7 @@ function setError(message = '') {
   element.hidden = !message;
 }
 function setPanel(name) {
-  const titles = { overview: 'Resumen administrativo', system: 'Equipo en vivo', accounts: 'Cuentas y roles', alerts: 'Alertas y difusión', requests: 'Solicitudes de acceso', videos: 'Biblioteca de videos', reports: 'Reportes agrícolas' };
+  const titles = { overview: 'Resumen administrativo', streaming: 'Estudio de streaming', system: 'Equipo en vivo', accounts: 'Cuentas y roles', alerts: 'Alertas y difusión', requests: 'Solicitudes de acceso', videos: 'Biblioteca de videos', reports: 'Reportes agrícolas' };
   if (!Object.hasOwn(titles, name)) name = 'overview';
   $$('.admin-nav button').forEach(button => button.classList.toggle('active', button.dataset.section === name));
   $$('.admin-section').forEach(panel => panel.classList.toggle('active', panel.dataset.panel === name));
@@ -95,7 +102,9 @@ function setPanel(name) {
   if (name === 'alerts') loadAlerts();
   if (name === 'requests') loadRequests();
   if (name === 'reports') loadReports();
+  if (name === 'videos') loadAdminVideos();
   if (name === 'system') updateSystemMetrics();
+  if (name === 'streaming') loadAdminStream();
 }
 async function boot() {
   try {
@@ -251,6 +260,138 @@ async function refreshStreamStatsAdmin() {
     if (likes) likes.textContent = String(stats.likes ?? 0);
   } catch { /* Se reintenta en el siguiente ciclo. */ }
 }
+function renderAdminStream() {
+  if (!adminStreamState) return;
+  const state = adminStreamState;
+  const obs = state.obs || {};
+  const live = Boolean(state.live);
+  const isObsStreaming = Boolean(obs.streaming);
+  $('#admin-stream-live-status').textContent = live ? 'EN VIVO' : isObsStreaming ? 'OBS TRANSMITIENDO' : 'ESPERANDO SEÑAL';
+  $('#admin-stream-live-status').classList.toggle('is-live', live);
+  $('#admin-stream-live-detail').textContent = live
+    ? `La señal está disponible en la página de usuarios desde ${formatDate(state.liveSince)}.`
+    : isObsStreaming ? 'OBS está transmitiendo; esperando que MediaMTX reciba la señal.'
+      : obs.connected ? 'OBS conectado. Inicia la transmisión para publicar en la página y en las plataformas configuradas.'
+        : 'Conecta OBS y configura al menos una plataforma para iniciar la transmisión.';
+  const toggle = $('#admin-stream-toggle');
+  toggle.textContent = isObsStreaming ? 'Detener transmisión' : 'Iniciar transmisión';
+  toggle.disabled = !obs.connected || (Boolean(state.videoBroadcast?.status === 'programada' || state.videoBroadcast?.status === 'en vivo') && !isObsStreaming);
+  $('#admin-stream-ingest-server').textContent = state.ingest?.server || 'No disponible';
+  $('#admin-stream-ingest-key').textContent = revealAdminIngestKey ? (state.ingest?.key || 'No disponible') : '••••••••••••••••••••••••';
+  $('#admin-stream-reveal-key').textContent = revealAdminIngestKey ? 'Ocultar' : 'Mostrar';
+  if (!adminObsFormEdited && obs.configured) {
+    $('#admin-stream-obs-form').elements.host.value = obs.host || 'host.docker.internal';
+    $('#admin-stream-obs-form').elements.port.value = String(obs.port || 4455);
+  }
+  const destinations = state.destinations || [];
+  $('#admin-stream-destination-count').textContent = `${destinations.length} ${destinations.length === 1 ? 'destino' : 'destinos'}`;
+  $('#admin-stream-destination-list').innerHTML = destinations.length ? destinations.map(destination => {
+    const outputLabels = { conectando: 'Conectando', enviando: 'Enviando señal', detenido: 'Detenido', error: 'Error' };
+    const status = live ? outputLabels[destination.outputStatus] || 'Esperando salida' : 'Listo';
+    return `<div class="admin-stream-destination"><span><b>${escapeHtml(destination.name)}</b><small>${escapeHtml(destination.platform)} · ${escapeHtml(status)}</small></span><button class="remove-destination" type="button" data-admin-stream-remove="${escapeHtml(destination.id)}" aria-label="Quitar ${escapeHtml(destination.name)}">×</button></div>`;
+  }).join('') : '<p class="form-message">Agrega una plataforma para retransmitir la señal.</p>';
+}
+async function loadAdminStream() {
+  if (adminStreamBusy || document.hidden || $('#admin-shell').hidden) return;
+  adminStreamBusy = true;
+  try {
+    adminStreamState = await api('/api/admin/stream');
+    renderAdminStream();
+  } catch (error) {
+    $('#admin-stream-live-status').textContent = 'SIN ACTUALIZACIÓN';
+    $('#admin-stream-live-detail').textContent = `No se pudo consultar la transmisión: ${error.message}`;
+  } finally { adminStreamBusy = false; }
+}
+$('#admin-stream-obs-form').addEventListener('input', () => { adminObsFormEdited = true; });
+$('#admin-stream-obs-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $('#admin-stream-connect');
+  button.disabled = true;
+  $('#admin-stream-feedback').textContent = 'Conectando con OBS…';
+  try {
+    adminStreamState = await api('/api/obs/connect', { method: 'POST', body: JSON.stringify({
+      host: form.elements.host.value.trim(),
+      port: Number(form.elements.port.value),
+      password: form.elements.password.value
+    }) });
+    form.elements.password.value = '';
+    adminObsFormEdited = false;
+    renderAdminStream();
+    $('#admin-stream-feedback').textContent = 'OBS conectado y configurado para publicar en INETER en vivo.';
+    $('#admin-stream-feedback').classList.remove('error');
+  } catch (error) {
+    $('#admin-stream-feedback').textContent = error.message;
+    $('#admin-stream-feedback').classList.add('error');
+  } finally { button.disabled = false; }
+});
+$('#admin-stream-toggle').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  $('#admin-stream-feedback').textContent = '';
+  try {
+    const action = adminStreamState?.obs?.streaming ? 'stop' : 'start';
+    adminStreamState = await api('/api/obs/stream', { method: 'POST', body: JSON.stringify({ action }) });
+    renderAdminStream();
+    $('#admin-stream-feedback').textContent = action === 'start' ? 'OBS inició. La página de usuarios se actualizará al recibir la señal.' : 'La transmisión de OBS se detuvo.';
+    $('#admin-stream-feedback').classList.remove('error');
+  } catch (error) {
+    $('#admin-stream-feedback').textContent = error.message;
+    $('#admin-stream-feedback').classList.add('error');
+    await loadAdminStream();
+  } finally { button.disabled = false; renderAdminStream(); }
+});
+$('#admin-stream-destination-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $('#admin-stream-add-destination');
+  button.disabled = true;
+  try {
+    adminStreamState = await api('/api/destinations', { method: 'POST', body: JSON.stringify({
+      platform: form.elements.platform.value,
+      name: form.elements.name.value.trim(),
+      serverUrl: form.elements.serverUrl.value.trim(),
+      key: form.elements.key.value
+    }) });
+    form.reset();
+    renderAdminStream();
+    $('#admin-stream-feedback').textContent = 'Plataforma guardada. Su clave quedó cifrada en el servidor.';
+    $('#admin-stream-feedback').classList.remove('error');
+  } catch (error) {
+    $('#admin-stream-feedback').textContent = error.message;
+    $('#admin-stream-feedback').classList.add('error');
+  } finally { button.disabled = false; }
+});
+$('#admin-stream-destination-form').elements.platform.addEventListener('change', event => {
+  $('#admin-stream-youtube-help').textContent = event.currentTarget.value === 'YouTube'
+    ? 'Para YouTube, activa Auto-start en el evento de YouTube Studio antes de transmitir. La clave se cifra y no se muestra después de guardarla.'
+    : 'Escribe la URL RTMP y la clave entregadas por la plataforma. La clave se cifra y no se muestra después de guardarla.';
+});
+$('#admin-stream-destination-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-admin-stream-remove]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    adminStreamState = await api(`/api/destinations/${encodeURIComponent(button.dataset.adminStreamRemove)}`, { method: 'DELETE' });
+    renderAdminStream();
+  } catch (error) {
+    $('#admin-stream-feedback').textContent = error.message;
+    $('#admin-stream-feedback').classList.add('error');
+    button.disabled = false;
+  }
+});
+$('#admin-stream-reveal-key').addEventListener('click', () => { revealAdminIngestKey = !revealAdminIngestKey; renderAdminStream(); });
+$('#admin-stream-copy-ingest').addEventListener('click', async () => {
+  if (!adminStreamState?.ingest) return;
+  try {
+    await navigator.clipboard.writeText(`Servidor: ${adminStreamState.ingest.server}\nClave: ${adminStreamState.ingest.key}`);
+    $('#admin-stream-feedback').textContent = 'Servidor y clave de OBS copiados.';
+    $('#admin-stream-feedback').classList.remove('error');
+  } catch (error) {
+    $('#admin-stream-feedback').textContent = `No se pudieron copiar los datos: ${error.message}`;
+    $('#admin-stream-feedback').classList.add('error');
+  }
+});
 async function loadUsers() {  const body = $('#users-table');
   body.innerHTML = '<tr><td colspan="4">Sincronizando cuentas con Firebase…</td></tr>';
   try {
@@ -378,25 +519,168 @@ $('#request-list').addEventListener('click', async event => {
   catch (error) { setError(error.message); button.disabled = false; }
 });
 
+let adminVideosCache = [];
+let adminVideoBroadcast = null;
+function renderAdminVideos() {
+  const list = $('#admin-video-list');
+  const selectedDelays = new Map($$('[data-video-delay]', list).map(select => [select.dataset.videoDelay, select.value]));
+  const broadcast = adminVideoBroadcast;
+  const active = broadcast && ['programada', 'en vivo'].includes(broadcast.status);
+  const remaining = broadcast?.status === 'programada' ? Math.max(0, Math.ceil((Date.parse(broadcast.startAt) - Date.now()) / 1000)) : 0;
+  const countdown = remaining > 60 ? `${Math.floor(remaining / 60)} min ${remaining % 60} s` : `${remaining} s`;
+  const statusLabel = broadcast?.status === 'programada'
+    ? `Previa: “${broadcast.title}” inicia en ${countdown}.`
+    : broadcast?.status === 'en vivo'
+      ? `Transmitiendo “${broadcast.title}” desde ${formatDate(broadcast.startedAt)}.`
+      : broadcast?.status === 'fallida'
+        ? `La última transmisión falló: ${broadcast.error || 'revisa las salidas RTMP.'}`
+        : broadcast?.status === 'finalizada'
+          ? `Finalizó la transmisión de “${broadcast.title}”.`
+          : broadcast?.status === 'detenida' ? 'La transmisión de video se detuvo.' : 'Selecciona un video para transmitirlo en la página y las plataformas configuradas.';
+  $('#video-broadcast-status').textContent = statusLabel;
+  list.innerHTML = adminVideosCache.length ? adminVideosCache.map(video => {
+    const ownsBroadcast = active && broadcast.videoId === video.id;
+    const preview = video.thumbnailUrl
+      ? `<img src="${escapeHtml(video.thumbnailUrl)}" alt="Miniatura de ${escapeHtml(video.title)}" loading="lazy" />`
+      : '<span class="admin-video-placeholder">▶</span>';
+    const action = ownsBroadcast
+      ? `<button class="button secondary" type="button" data-video-broadcast="stop" data-video-id="${escapeHtml(video.id)}">Detener video</button>`
+      : `<label class="video-delay-label">Iniciar en<select data-video-delay="${escapeHtml(video.id)}" ${active ? 'disabled' : ''}><option value="0">Ahora</option><option value="30">30 segundos</option><option value="60">1 minuto</option><option value="120">2 minutos</option><option value="300">5 minutos</option><option value="600">10 minutos</option></select></label><button class="button primary" type="button" data-video-broadcast="start" data-video-id="${escapeHtml(video.id)}" ${active ? 'disabled' : ''}>Transmitir</button>`;
+    return `<article class="admin-video-card"><div class="admin-video-poster">${preview}</div><div class="admin-video-info"><h4>${escapeHtml(video.title)}</h4><small>${escapeHtml(formatDate(video.createdAt))} · ${formatBytes(video.size)}${video.subtitlesUrl ? ' · Subtítulos' : ''}</small><div class="admin-video-assets"><label>Miniatura<input type="file" accept="image/jpeg,image/png,image/webp" data-video-asset="thumbnail" data-video-id="${escapeHtml(video.id)}" /></label><label>Subtítulos WebVTT<input type="file" accept=".vtt,text/vtt" data-video-asset="subtitles" data-video-id="${escapeHtml(video.id)}" /></label></div><div class="admin-video-controls">${action}</div></div></article>`;
+  }).join('') : '<p class="empty-admin-videos">Aún no hay videos en la biblioteca. Sube un MP4 para empezar.</p>';
+  $$('[data-video-delay]', list).forEach(select => {
+    if (selectedDelays.has(select.dataset.videoDelay)) select.value = selectedDelays.get(select.dataset.videoDelay);
+  });
+}
+async function loadAdminVideos() {
+  const list = $('#admin-video-list');
+  try {
+    const data = await api('/api/admin/videos');
+    adminVideosCache = Array.isArray(data.videos) ? data.videos : [];
+    adminVideoBroadcast = data.broadcast || null;
+    renderAdminVideos();
+  } catch (error) {
+    if (!adminVideosCache.length) list.textContent = error.message;
+    $('#video-broadcast-status').textContent = `No se pudo actualizar la biblioteca: ${error.message}`;
+  }
+}
+function uploadAdminBinary(url, file, contentType, headers = {}, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('content-type', contentType);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    xhr.upload.onprogress = event => { if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total); };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data.error || `No se pudo subir el archivo (${xhr.status}).`));
+    };
+    xhr.onerror = () => reject(new Error('Se perdió la conexión durante la subida.'));
+    xhr.send(file);
+  });
+}
+$('#refresh-admin-videos').addEventListener('click', loadAdminVideos);
 $('#video-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const form = event.currentTarget; const file = form.elements.file.files[0];
+  const form = event.currentTarget;
+  const file = form.elements.file.files[0];
+  const thumbnail = form.elements.thumbnail.files[0];
+  const subtitles = form.elements.subtitles.files[0];
   const message = $('#video-message'); const progress = $('#upload-progress'); const button = $('#upload-video');
-  if (!file || file.type !== 'video/mp4') { message.className = 'form-message error'; message.textContent = 'Selecciona un archivo MP4.'; return; }
+  const thumbnailType = thumbnail?.type || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' })[thumbnail?.name.split('.').pop().toLowerCase()];
+  if (!file || !/\.mp4$/i.test(file.name) || (file.type && file.type !== 'video/mp4')) { message.className = 'form-message error'; message.textContent = 'Selecciona un archivo MP4.'; return; }
   if (file.size > 1024 * 1024 * 1024) { message.className = 'form-message error'; message.textContent = 'El archivo supera el máximo de 1 GB.'; return; }
+  if (thumbnail && !['image/jpeg', 'image/png', 'image/webp'].includes(thumbnailType)) { message.className = 'form-message error'; message.textContent = 'La miniatura debe ser JPG, PNG o WebP.'; return; }
+  if (subtitles && subtitles.size > 2 * 1024 * 1024) { message.className = 'form-message error'; message.textContent = 'Los subtítulos superan el máximo de 2 MB.'; return; }
   button.disabled = true; progress.hidden = false; progress.value = 0; message.textContent = 'Subiendo video…';
-  const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/admin/videos'); xhr.withCredentials = true;
-  xhr.setRequestHeader('content-type', 'video/mp4'); xhr.setRequestHeader('x-video-title', encodeURIComponent(form.elements.title.value.trim()));
-  xhr.upload.onprogress = event => { if (event.lengthComputable) progress.value = Math.round(event.loaded / event.total * 100); };
-  xhr.onload = () => {
-    let data = {}; try { data = JSON.parse(xhr.responseText); } catch {}
-    if (xhr.status >= 200 && xhr.status < 300) { message.className = 'form-message success'; message.textContent = `Video publicado en la biblioteca. ${data.recording?.title || ''}`; form.reset(); progress.value = 100; }
-    else { message.className = 'form-message error'; message.textContent = data.error || `No se pudo subir el video (${xhr.status}).`; }
+  try {
+    const data = await uploadAdminBinary('/api/admin/videos', file, 'video/mp4', {
+      'x-video-title': encodeURIComponent(form.elements.title.value.trim())
+    }, value => { progress.value = Math.round(value * 80); });
+    const video = data.video;
+    if (thumbnail) {
+      message.textContent = 'Video publicado. Subiendo miniatura…';
+      await uploadAdminBinary(`/api/admin/videos/${encodeURIComponent(video.id)}/thumbnail`, thumbnail, thumbnailType);
+      progress.value = 90;
+    }
+    if (subtitles) {
+      message.textContent = 'Subiendo subtítulos…';
+      await uploadAdminBinary(`/api/admin/videos/${encodeURIComponent(video.id)}/subtitles`, subtitles, 'text/vtt', {
+        'x-subtitle-language': form.elements.subtitleLanguage.value.trim() || 'es'
+      });
+    }
+    message.className = 'form-message success';
+    message.textContent = 'Video publicado en la biblioteca con sus archivos complementarios.';
+    form.reset();
+    form.elements.subtitleLanguage.value = 'es';
+    progress.value = 100;
+    await loadAdminVideos();
+  } catch (error) {
+    message.className = 'form-message error';
+    message.textContent = `No se completó la publicación: ${error.message}. Si el MP4 ya se subió, aparecerá en la biblioteca y podrás intentarlo de nuevo.`;
+    await loadAdminVideos();
+  } finally {
     button.disabled = false;
-  };
-  xhr.onerror = () => { message.className = 'form-message error'; message.textContent = 'Se perdió la conexión durante la subida.'; button.disabled = false; };
-  xhr.send(file);
+    setTimeout(() => { progress.hidden = true; }, 1200);
+  }
 });
+$('#admin-video-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-video-broadcast]');
+  if (!button) return;
+  const action = button.dataset.videoBroadcast;
+  const delay = action === 'start' ? Number($$('[data-video-delay]').find(select => select.dataset.videoDelay === button.dataset.videoId)?.value || 0) : 0;
+  button.disabled = true;
+  try {
+    const result = await api('/api/admin/video-broadcast', {
+      method: 'POST',
+      body: JSON.stringify({ action, videoId: button.dataset.videoId, delaySeconds: delay })
+    });
+    adminVideoBroadcast = result.broadcast;
+    renderAdminVideos();
+  } catch (error) {
+    setError(error.message);
+    button.disabled = false;
+  }
+});
+$('#admin-video-list').addEventListener('change', async event => {
+  const input = event.target.closest('[data-video-asset]');
+  const file = input?.files?.[0];
+  if (!input || !file) return;
+  const assetType = input.dataset.videoAsset;
+  if (assetType === 'subtitles' && (file.size > 2 * 1024 * 1024 || !/\.vtt$/i.test(file.name))) {
+    setError('El archivo de subtítulos debe ser WebVTT (.vtt) y no superar 2 MB.');
+    input.value = '';
+    return;
+  }
+  let contentType = 'text/vtt';
+  if (assetType === 'thumbnail') {
+    const extension = file.name.split('.').pop().toLowerCase();
+    contentType = file.type || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' })[extension];
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType) || file.size > 8 * 1024 * 1024) {
+      setError('La miniatura debe ser JPG, PNG o WebP y no superar 8 MB.');
+      input.value = '';
+      return;
+    }
+  }
+  input.disabled = true;
+  try {
+    await uploadAdminBinary(`/api/admin/videos/${encodeURIComponent(input.dataset.videoId)}/${assetType}`, file, contentType, assetType === 'subtitles' ? { 'x-subtitle-language': 'es' } : {});
+    await loadAdminVideos();
+  } catch (error) {
+    setError(error.message);
+    input.value = '';
+    input.disabled = false;
+  }
+});
+setInterval(() => {
+  if ($('.admin-section.active')?.dataset.panel === 'videos') loadAdminVideos();
+}, 5000);
+setInterval(() => {
+  if ($('.admin-section.active')?.dataset.panel === 'streaming') loadAdminStream();
+}, 4000);
 
 async function loadReports() {
   const body = $('#reports-table'); body.innerHTML = '<tr><td colspan="6">Cargando reportes…</td></tr>';

@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const { spawn, execFile } = require('node:child_process');
 const os = require('node:os');
 const net = require('node:net');
+const QRCode = require('qrcode');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
@@ -42,6 +43,7 @@ function requestUsesHttps(req) {
 let state = readState();
 if (!Array.isArray(state.sessions)) state.sessions = [];
 if (!Array.isArray(state.schedules)) state.schedules = [];
+if (!Array.isArray(state.videos)) state.videos = [];
 if (!Array.isArray(state.professionals)) state.professionals = [];
 if (!Array.isArray(state.adminAccessRequests)) state.adminAccessRequests = [];
 if (!Array.isArray(state.agricultureReports)) state.agricultureReports = [];
@@ -129,6 +131,10 @@ let live = false;
 let ffmpegJobs = [];
 let activeSession = null;
 let liveSince = null;
+let livePublisherReady = false;
+let liveDisconnectTimer = null;
+let liveLimitStartedAt = null;
+let liveLimitTimer = null;
 let lastError = '';
 let scanBusy = false;
 let obsSocket = null;
@@ -137,6 +143,18 @@ let obsStreaming = false;
 let obsError = '';
 let obsConnectPromise = null;
 let obsPending = new Map();
+let videoBroadcast = null;
+const MAX_LIVE_DURATION_MS = 3.5 * 60 * 60 * 1000;
+const MAX_LIVE_DURATION_SECONDS = Math.floor(MAX_LIVE_DURATION_MS / 1000);
+const LIVE_RECONNECT_GRACE_MS = 15_000;
+const obsVideoProfiles = {
+  'landscape-1080': { baseWidth: 1920, baseHeight: 1080, outputWidth: 1920, outputHeight: 1080 },
+  'landscape-720': { baseWidth: 1280, baseHeight: 720, outputWidth: 1280, outputHeight: 720 },
+  'portrait-1080': { baseWidth: 1080, baseHeight: 1920, outputWidth: 1080, outputHeight: 1920 },
+  'portrait-720': { baseWidth: 720, baseHeight: 1280, outputWidth: 720, outputHeight: 1280 },
+  'square-1080': { baseWidth: 1080, baseHeight: 1080, outputWidth: 1080, outputHeight: 1080 },
+  'square-720': { baseWidth: 720, baseHeight: 720, outputWidth: 720, outputHeight: 720 }
+};
 const destinationOutputs = new Map();
 let scheduleBusy = false;
 const authAttempts = new Map();
@@ -306,7 +324,10 @@ function connectObs() {
     let settled = false;
     const socket = new WebSocket(`ws://${host}:${port}`);
     obsSocket = socket;
-    const timeout = setTimeout(() => finish(new Error('Tiempo agotado conectando a OBS. Revisa host, puerto y servidor WebSocket.')), 8000);
+    const timeout = setTimeout(() => {
+      finish(new Error(`Tiempo agotado conectando a OBS en ${host}:${port}. Comprueba el puerto WebSocket, la contraseña y que el backend pueda alcanzar ese equipo.`));
+      try { socket.close(); } catch {}
+    }, 8000);
     function finish(error) {
       if (settled) return;
       settled = true; clearTimeout(timeout);
@@ -322,10 +343,15 @@ function connectObs() {
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.op === 0) {
         const data = message.d || {};
-        const identify = { rpcVersion: Math.min(Number(data.rpcVersion || 1), 1), eventSubscriptions: 0 };
+        const identify = { rpcVersion: Math.min(Number(data.rpcVersion || 1), 1), eventSubscriptions: 64 };
         if (data.authentication) identify.authentication = obsAuth(password, data.authentication.salt, data.authentication.challenge);
-        socket.send(JSON.stringify({ op: 1, d: identify }));
+        try { socket.send(JSON.stringify({ op: 1, d: identify })); }
+        catch (error) { finish(new Error(`No se pudo completar la identificación de OBS: ${error.message}`)); }
       } else if (message.op === 2) finish();
+      else if (message.op === 5) {
+        const eventType = message.d?.eventType;
+        if (eventType === 'StreamStateChanged') obsStreaming = !!message.d?.eventData?.outputActive;
+      }
       else if (message.op === 7) {
         const pending = obsPending.get(message.d?.requestId);
         if (pending) {
@@ -336,10 +362,21 @@ function connectObs() {
         }
       }
     });
-    socket.addEventListener('error', () => finish(new Error('No se pudo conectar con OBS WebSocket.')));
-    socket.addEventListener('close', () => {
-      if (socket === obsSocket) { obsConnected = false; obsStreaming = false; }
-      if (!settled) finish(new Error('OBS cerró la conexión WebSocket.'));
+    socket.addEventListener('error', () => finish(new Error(`No se pudo conectar con OBS WebSocket en ${host}:${port}. Verifica que el servidor WebSocket de OBS esté habilitado y que el firewall permita la conexión.`)));
+    socket.addEventListener('close', event => {
+      const closeError = event.code === 4009
+        ? new Error('OBS rechazó la autenticación WebSocket (4009). Verifica la contraseña configurada en OBS y vuelve a conectarte. Si no cambiaste la contraseña, deja el campo vacío para reutilizar la que ya está guardada.')
+        : new Error(`OBS cerró la conexión WebSocket (${event.code}${event.reason ? `: ${event.reason}` : ''}). Revisa la contraseña y el permiso de red.`);
+      if (socket === obsSocket) {
+        obsConnected = false;
+        obsStreaming = false;
+        for (const [requestId, pending] of obsPending) {
+          clearTimeout(pending.timeout);
+          obsPending.delete(requestId);
+          pending.reject(closeError);
+        }
+      }
+      if (!settled) finish(closeError);
     });
   });
   return obsConnectPromise;
@@ -350,7 +387,14 @@ async function obsRequest(requestType, requestData = {}) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { obsPending.delete(requestId); reject(new Error(`OBS no respondió a ${requestType}.`)); }, 8000);
     obsPending.set(requestId, { resolve, reject, timeout });
-    obsSocket.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+    try {
+      if (!obsSocket || obsSocket.readyState !== WebSocket.OPEN) throw new Error('La conexión WebSocket de OBS ya no está abierta.');
+      obsSocket.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+    } catch (error) {
+      clearTimeout(timeout);
+      obsPending.delete(requestId);
+      reject(error);
+    }
   });
 }
 async function obsStatus() {
@@ -411,6 +455,15 @@ async function publishAlertToFirebase(alert) {
 function firebaseStatus() {
   const web = firebaseWebConfig();
   return { webConfigured: web.configured, firestore: !!firebaseAdmin, push: !!firebaseAdmin && !!web.vapidKey && !!web.config.messagingSenderId, adminError: firebaseAdminError };
+}
+function firebaseTokenVerificationError(error) {
+  const code = String(error?.code || 'auth/verification-failed');
+  const detail = String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 240);
+  console.warn(`Firebase ID token verification failed (${code}): ${detail}`);
+  if (code === 'app/invalid-credential' && /invalid_grant|short-lived token|iat and exp/i.test(detail)) {
+    return 'Firebase rechazó las credenciales del servidor: el reloj de Windows está desincronizado o la clave de cuenta de servicio fue revocada. Abre PowerShell como administrador y ejecuta: Set-Service W32Time -StartupType Automatic; Start-Service W32Time; w32tm /resync /force. Luego reinicia En Vivo. Si la hora ya está sincronizada, genera una clave nueva de Firebase Admin.';
+  }
+  return `Firebase no pudo validar la sesión (${code}): ${detail}`;
 }
 function alertMailStatus() {
   return { ready: !!(process.env.RESEND_API_KEY && process.env.ALERT_FROM_EMAIL), provider: 'Resend', sender: process.env.ALERT_FROM_EMAIL || '' };
@@ -531,6 +584,7 @@ function publicState() {
     sessions: state.sessions.slice(-20).reverse(), schedules: state.schedules.slice(-20).sort((a, b) => a.startsAt.localeCompare(b.startsAt)), live, liveSince, lastError,
     ingest: { server: process.env.PUBLIC_RTMP_URL || 'rtmp://127.0.0.1:1935/live', key: ingestToken },
     recordings: listRecordings(),
+    videoBroadcast: publicVideoBroadcast(),
     alerts: state.alerts.slice(-20).reverse().map(publicAlert),
     streamStats: streamStatsSnapshot(),
     obs: { configured: !!state.obs?.secret, connected: obsConnected, streaming: obsStreaming, host: state.obs?.host || process.env.OBS_WS_HOST || '127.0.0.1', port: Number(state.obs?.port || 4455), error: obsError }
@@ -735,12 +789,171 @@ function listRecordings() {
         const startedAt = liveSince ? Date.parse(liveSince) : 0;
         if (live && startedAt && stat.birthtimeMs >= startedAt - 10_000) continue;
         const relative = path.relative(recordingsDir, full);
-        found.push({ name: relative, size: stat.size, createdAt: stat.birthtime.toISOString(), url: `/recordings/${relative.split(path.sep).map(encodeURIComponent).join('/')}` });
+        const url = `/recordings/${relative.split(path.sep).map(encodeURIComponent).join('/')}`;
+        const video = state.videos.find(item => item.filename === relative);
+        found.push({
+          id: video?.id || crypto.createHash('sha256').update(relative).digest('hex').slice(0, 32),
+          name: relative,
+          title: video?.title || path.basename(relative, path.extname(relative)),
+          size: stat.size,
+          createdAt: video?.createdAt || stat.birthtime.toISOString(),
+          url,
+          thumbnailUrl: video?.thumbnailFilename ? `/recordings/biblioteca/${encodeURIComponent(video.thumbnailFilename)}` : '',
+          subtitlesUrl: video?.subtitleFilename ? `/recordings/biblioteca/${encodeURIComponent(video.subtitleFilename)}` : '',
+          subtitleLanguage: video?.subtitleLanguage || 'es'
+        });
       }
     }
   }
   walk(recordingsDir);
   return found.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+function publicVideoBroadcast() {
+  if (!videoBroadcast) return null;
+  const { id, videoId, title, status, startAt, startedAt, endedAt, error, delaySeconds } = videoBroadcast;
+  return { id, videoId, title, status, startAt, startedAt, endedAt, error, delaySeconds };
+}
+function videoBroadcastIsActive() {
+  return !!videoBroadcast && (
+    ['programada', 'en vivo'].includes(videoBroadcast.status) ||
+    videoBroadcast.jobs.some(job => job.exitCode === null && job.signalCode === null)
+  );
+}
+function stopVideoBroadcast() {
+  if (!videoBroadcastIsActive()) return false;
+  clearTimeout(videoBroadcast.timer);
+  videoBroadcast.timer = null;
+  videoBroadcast.status = 'detenida';
+  videoBroadcast.endedAt = new Date().toISOString();
+  for (const job of videoBroadcast.jobs) if (!job.killed) job.kill('SIGINT');
+  return true;
+}
+async function stopLiveAtMaximumDuration() {
+  if (!liveLimitStartedAt) return;
+  lastError = 'La transmisión se detuvo al alcanzar el límite máximo de 3 horas y 30 minutos.';
+  console.warn(lastError);
+  if (videoBroadcastIsActive() && videoBroadcast.source === 'video') stopVideoBroadcast();
+  if (state.obs?.secret) {
+    try {
+      const status = await obsRequest('GetStreamStatus');
+      obsStreaming = !!status.outputActive;
+      if (obsStreaming) {
+        await obsRequest('StopStream');
+        obsStreaming = false;
+      }
+    } catch (error) {
+      lastError = `Se alcanzó el límite máximo de 3 horas y 30 minutos, pero no se pudo detener OBS: ${error.message}`;
+      console.error(lastError);
+    }
+  }
+  try {
+    const baseUrl = process.env.MEDIAMTX_API_URL || 'http://127.0.0.1:9997';
+    const headers = {};
+    if (process.env.MEDIAMTX_API_USER && process.env.MEDIAMTX_API_PASS) {
+      const auth = Buffer.from(`${process.env.MEDIAMTX_API_USER}:${process.env.MEDIAMTX_API_PASS}`).toString('base64');
+      headers.Authorization = `Basic ${auth}`;
+    }
+    const connectionsResponse = await fetch(`${baseUrl}/v3/rtmp/conns/list`, { headers });
+    if (!connectionsResponse.ok) throw new Error(`MediaMTX API ${connectionsResponse.status}`);
+    const connections = await connectionsResponse.json();
+    for (const connection of connections.items || []) {
+      if (connection.path !== `live/${ingestToken}`) continue;
+      const kickResponse = await fetch(`${baseUrl}/v3/rtmp/conns/kick/${encodeURIComponent(connection.id)}`, { method: 'POST', headers });
+      if (!kickResponse.ok && kickResponse.status !== 404) throw new Error(`MediaMTX API ${kickResponse.status}`);
+    }
+  } catch (error) {
+    lastError = `Se alcanzó el límite máximo de 3 horas y 30 minutos, pero no se pudo cerrar la entrada de MediaMTX: ${error.message}`;
+    console.error(lastError);
+  }
+}
+function startLiveDurationLimit() {
+  if (liveLimitStartedAt) return;
+  liveLimitStartedAt = Date.now();
+  liveLimitTimer = setTimeout(() => {
+    liveLimitTimer = null;
+    stopLiveAtMaximumDuration().catch(error => {
+      lastError = `No se pudo aplicar el límite máximo de transmisión: ${error.message}`;
+      console.error(lastError);
+    });
+  }, MAX_LIVE_DURATION_MS);
+}
+function clearLiveDurationLimit() {
+  clearTimeout(liveLimitTimer);
+  liveLimitTimer = null;
+  liveLimitStartedAt = null;
+}
+async function startVideoBroadcast(broadcast) {
+  if (videoBroadcast !== broadcast || broadcast.status !== 'programada') return;
+  try {
+    if (live || activeSession?.status === 'grabando') throw new Error('Ya hay una señal de OBS activa.');
+    if (state.obs?.secret && obsConnected) {
+      const obs = await obsStatus();
+      if (!obs.connected) throw new Error(`No se pudo comprobar el estado de OBS: ${obs.error || 'desconectado'}`);
+      if (obs.streaming) throw new Error('OBS ya está transmitiendo. Detén esa emisión antes de iniciar un video.');
+    }
+    if (videoBroadcast !== broadcast || broadcast.status !== 'programada') return;
+    if (obsStreaming) throw new Error('OBS ya está transmitiendo. Detén esa emisión antes de iniciar un video.');
+    const video = listRecordings().find(recording => recording.id === broadcast.videoId);
+    if (!video) throw new Error('El video ya no está disponible.');
+    const inputPath = path.resolve(recordingsDir, ...video.name.split('/'));
+    if (!inputPath.startsWith(recordingsDir + path.sep) || !fs.existsSync(inputPath)) throw new Error('No se encontró el archivo de video.');
+    for (const destination of state.destinations) {
+      if (!validRtmp(destination.serverUrl)) throw new Error(`La URL de ${destination.name} no es RTMP válida.`);
+      const key = decrypt(destination.secret).trim();
+      if (!key) throw new Error(`Falta la clave de transmisión de ${destination.name}.`);
+    }
+    const ingestBase = (process.env.MEDIAMTX_RTMP_BASE || 'rtmp://127.0.0.1:1935').replace(/\/+$/, '');
+    const output = `${ingestBase}/live/${ingestToken}`;
+    broadcast.status = 'en vivo';
+    broadcast.startedAt = new Date().toISOString();
+    broadcast.source = 'video';
+    const child = spawn(process.env.FFMPEG_PATH || 'ffmpeg', [
+      '-hide_banner', '-loglevel', 'warning', '-re', '-i', inputPath, '-t', String(MAX_LIVE_DURATION_SECONDS),
+      '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast',
+      '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k',
+      '-ar', '44100', '-f', 'flv', output
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    broadcast.jobs.push(child);
+    child.stderr.on('data', data => {
+      const line = data.toString().trim();
+      if (!line) return;
+      const safeLine = line.replace(/rtmps?:\/\/[^\s"'<>]+/gi, '[RTMP URL protegida]');
+      if (/\b(error|failed|refused|timed out|invalid|could not|unable to|not found|connection reset|broken pipe|permission denied)\b/i.test(safeLine)) {
+        broadcast.error = safeLine.slice(-300);
+        console.error('[ffmpeg video]', safeLine);
+      }
+    });
+    child.once('error', error => {
+      broadcast.status = 'fallida';
+      broadcast.error = `No se pudo iniciar FFmpeg para la transmisión: ${String(error.message || error).slice(0, 180)}`;
+      broadcast.endedAt = new Date().toISOString();
+      console.error('[ffmpeg video]', broadcast.error);
+    });
+    child.once('close', (code, signal) => {
+      if (videoBroadcast !== broadcast || broadcast.status !== 'en vivo') return;
+      if (code === 0) broadcast.status = 'finalizada';
+      else {
+        broadcast.status = 'fallida';
+        if (!broadcast.error) broadcast.error = `FFmpeg terminó con código ${code ?? `señal ${signal || 'desconocida'}`}.`;
+      }
+      broadcast.endedAt = new Date().toISOString();
+    });
+  } catch (error) {
+    broadcast.status = 'fallida';
+    broadcast.error = String(error.message || error);
+    broadcast.endedAt = new Date().toISOString();
+    console.error('[video broadcast]', broadcast.error);
+  }
+}
+async function saveUploadedAsset(req, destination, maxBytes, limitMessage) {
+  let size = 0;
+  const limiter = new Transform({ transform(chunk, encoding, callback) {
+    size += chunk.length;
+    callback(size > maxBytes ? new Error(limitMessage) : null, chunk);
+  } });
+  await pipeline(req, limiter, fs.createWriteStream(destination, { flags: 'wx' }));
+  if (!size) throw new Error('El archivo está vacío.');
+  return size;
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -770,13 +983,18 @@ function validRtmp(value) {
   catch { return false; }
 }
 function startRelay() {
-  if (activeSession) return;
+  if (!activeSession) {
+    activeSession = { id: crypto.randomUUID(), startedAt: new Date().toISOString(), recording: 'MediaMTX', destinations: state.destinations.map(d => d.name), status: 'grabando' };
+    peakStreamViewers = 0;
+    state.sessions.push(activeSession); saveState();
+  }
   const source = `${process.env.MEDIAMTX_RTSP_BASE || 'rtsp://127.0.0.1:8554'}/live/${ingestToken}`;
   const base = ['-hide_banner', '-loglevel', 'warning', '-rtsp_transport', 'tcp', '-i', source];
-  activeSession = { id: crypto.randomUUID(), startedAt: new Date().toISOString(), recording: 'MediaMTX', destinations: state.destinations.map(d => d.name), status: 'grabando' };
-  peakStreamViewers = 0;
-  state.sessions.push(activeSession); saveState();
+  const activeDestinationIds = new Set(ffmpegJobs
+    .filter(job => !job.killed && job.exitCode === null && job.signalCode === null)
+    .map(job => job.destinationId));
   for (const destination of state.destinations) {
+    if (activeDestinationIds.has(destination.id)) continue;
     try {
       const key = decrypt(destination.secret);
       const separator = destination.serverUrl.includes('?') ? '&' : (destination.serverUrl.endsWith('/') ? '' : '/');
@@ -789,6 +1007,7 @@ function startRelay() {
 function spawnFfmpeg(args, label, destinationId) {
   const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
   const child = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  child.destinationId = destinationId;
   ffmpegJobs.push(child);
   child.once('spawn', () => { if (destinationId) destinationOutputs.set(destinationId, 'enviando'); });
   child.stderr.on('data', data => {
@@ -833,12 +1052,32 @@ async function scanStream() {
     if (!response.ok) throw new Error(`MediaMTX API ${response.status}`);
     const result = await response.json();
     const item = (result.items || []).find(pathItem => pathItem.name === `live/${ingestToken}` && pathItem.ready);
-    if (item && !live) {
-      live = true; liveSince = new Date().toISOString(); lastError = '';
+    livePublisherReady = !!item;
+    if (item) {
+      clearTimeout(liveDisconnectTimer);
+      liveDisconnectTimer = null;
+      if (!live) {
+        const interruptedVideo = videoBroadcastIsActive() && videoBroadcast.source !== 'video';
+        if (interruptedVideo) stopVideoBroadcast();
+        live = true; liveSince = new Date().toISOString();
+        lastError = interruptedVideo ? 'Se detuvo el video para dar paso a la señal entrante de OBS.' : '';
+        startLiveDurationLimit();
+      }
       startRelay();
-    } else if (!item && live) {
-      live = false; liveSince = null; stopRelay();
-      setTimeout(() => { if (activeSession && activeSession.status === 'grabando') { activeSession.endedAt = new Date().toISOString(); activeSession.status = 'guardada'; saveState(); } activeSession = null; }, 2500);
+    } else if (live && !liveDisconnectTimer) {
+      liveDisconnectTimer = setTimeout(() => {
+        liveDisconnectTimer = null;
+        if (livePublisherReady) return;
+        live = false; liveSince = null;
+        stopRelay();
+        if (activeSession && activeSession.status === 'grabando') {
+          activeSession.endedAt = new Date().toISOString();
+          activeSession.status = 'guardada';
+          saveState();
+        }
+        activeSession = null;
+        clearLiveDurationLimit();
+      }, LIVE_RECONNECT_GRACE_MS);
     }
   } catch (error) { lastError = `No se pudo contactar MediaMTX: ${error.message}`; }
   finally { scanBusy = false; }
@@ -880,7 +1119,7 @@ setInterval(async () => {
   catch (error) { obsError = error.message; }
 }, 4000);
 
-const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
+const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.vtt': 'text/vtt; charset=utf-8' };
 const server = http.createServer((req, res) => {
   handleHttpRequest(req, res).catch(error => {
     console.error('Error al atender una solicitud HTTP:', error);
@@ -904,6 +1143,71 @@ async function handleHttpRequest(req, res) {
   res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
   res.setHeader('x-frame-options', 'DENY');
   const url = new URL(req.url, 'http://localhost');
+  if (req.method === 'GET' && url.pathname === '/api/live/status') {
+    return json(res, 200, {
+      live,
+      liveSince,
+      playlistUrl: live ? '/live/playback/index.m3u8' : null
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/live/qr') {
+    const targetUrl = url.searchParams.get('url') || '';
+    let target;
+    try { target = new URL(targetUrl); }
+    catch { return json(res, 400, { error: 'El enlace para el código QR no es válido.' }); }
+    const expectedOrigin = `${requestUsesHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
+    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== expectedOrigin || targetUrl.length > 2048) {
+      return json(res, 400, { error: 'El enlace del código QR debe pertenecer a este sitio.' });
+    }
+    try {
+      const image = await QRCode.toBuffer(target.href, { width: 256, margin: 1 });
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return res.end(image);
+    } catch (error) {
+      console.error('No se pudo generar el código QR de la transmisión:', error);
+      return json(res, 500, { error: 'No se pudo generar el código QR de la transmisión.' });
+    }
+  }
+  const livePlaybackPrefix = '/live/playback/';
+  if (req.method === 'GET' && url.pathname.startsWith(livePlaybackPrefix)) {
+    const relativePath = url.pathname.slice(livePlaybackPrefix.length);
+    const segments = relativePath.split('/');
+    if (!relativePath || !/^[A-Za-z0-9._/-]+$/.test(relativePath) || segments.some(segment => !segment || segment === '.' || segment === '..')) {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+      return res.end('Ruta de transmisión no válida.');
+    }
+    const hlsBaseUrl = (process.env.MEDIAMTX_HLS_URL || 'http://127.0.0.1:8888').replace(/\/+$/, '');
+    try {
+      const upstreamUrl = `${hlsBaseUrl}/live/${ingestToken}/${relativePath}${url.search}`;
+      const upstream = await fetch(upstreamUrl);
+      if (!upstream.ok) {
+        const detail = await upstream.text();
+        res.writeHead(upstream.status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(detail || 'MediaMTX no tiene contenido disponible para esta transmisión.');
+      }
+      if (relativePath.endsWith('.m3u8')) {
+        let playlist = await upstream.text();
+        const internalPrefix = `/live/${ingestToken}/`;
+        const publicPrefix = '/live/playback/';
+        playlist = playlist
+          .split(`${hlsBaseUrl}${internalPrefix}`).join(publicPrefix)
+          .split(`http://${req.headers.host}${internalPrefix}`).join(publicPrefix)
+          .split(`https://${req.headers.host}${internalPrefix}`).join(publicPrefix)
+          .split(internalPrefix).join(publicPrefix);
+        res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store' });
+        return res.end(playlist);
+      }
+      res.writeHead(200, {
+        'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
+        'cache-control': 'no-store'
+      });
+      if (!upstream.body) return res.end();
+      return pipeline(upstream.body, res);
+    } catch (error) {
+      if (res.headersSent) { res.destroy(error); return; }
+      return json(res, 502, { error: `No se pudo obtener el video en vivo: ${error.message}` });
+    }
+  }
   if (req.method === 'GET' && (url.pathname === '/healthz' || url.pathname === '/api/health')) {
     return json(res, 200, { status: 'ok', live, obsConnected, uptimeSeconds: Math.round(process.uptime()) });
   }
@@ -919,9 +1223,7 @@ async function handleHttpRequest(req, res) {
       let identity;
       try { identity = await firebaseAdmin.auth.verifyIdToken(idToken); }
       catch (error) {
-        const code = String(error?.code || 'auth/verification-failed');
-        console.warn(`Firebase monitor token verification failed (${code}): ${String(error?.message || error).slice(0, 240)}`);
-        return json(res, 401, { error: `Firebase rechazó el token de sesión (${code}). Revisa que el usuario y el backend pertenezcan al proyecto ineter-streaming.` });
+        return json(res, 401, { error: firebaseTokenVerificationError(error) });
       }
       const uid = String(identity.uid || '');
       const email = String(identity.email || '').trim().toLowerCase();
@@ -929,7 +1231,6 @@ async function handleHttpRequest(req, res) {
       let user = state.professionals.find(profile => profile.firebaseUid === uid && String(profile.email || '').trim().toLowerCase() === email);
       if (!user) {
         user = state.professionals.find(profile => String(profile.email || '').trim().toLowerCase() === email);
-        if (user?.firebaseUid && user.firebaseUid !== uid) return json(res, 409, { error: 'Este correo ya está vinculado a otra cuenta de Firebase.' });
         if (user) user.firebaseUid = uid;
       }
       const initialAdminEmail = String(process.env.INETER_INITIAL_ADMIN_EMAIL || '').trim().toLowerCase();
@@ -967,7 +1268,9 @@ async function handleHttpRequest(req, res) {
       if (idToken.length < 100 || idToken.length > 8192) return json(res, 400, { error: 'La sesión de Firebase no es válida.' });
       let identity;
       try { identity = await firebaseAdmin.auth.verifyIdToken(idToken, true); }
-      catch { return json(res, 401, { error: 'Firebase rechazó la sesión. Inicia sesión de nuevo.' }); }
+      catch (error) {
+        return json(res, 401, { error: firebaseTokenVerificationError(error) });
+      }
       const uid = String(identity.uid || '');
       const email = String(identity.email || '').trim().toLowerCase();
       if (!uid || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 403, { error: 'La cuenta de Firebase debe tener un correo válido.' });
@@ -977,7 +1280,6 @@ async function handleHttpRequest(req, res) {
       if (!user) {
         user = state.professionals.find(profile => String(profile.email || '').trim().toLowerCase() === email);
         if (user && !identity.email_verified) return json(res, 403, { error: 'Verifica tu correo de Firebase para vincular esta cuenta institucional.' });
-        if (user?.firebaseUid && user.firebaseUid !== uid) return json(res, 409, { error: 'Este correo ya está vinculado a otra cuenta de Firebase.' });
         if (user) user.firebaseUid = uid;
       }
       if (!user) {
@@ -1008,7 +1310,9 @@ async function handleHttpRequest(req, res) {
     ]);
     const isMonitorSnapshot = req.method === 'GET' && url.pathname === '/api/admin/monitor';
     const isMonitorAdminCreation = req.method === 'POST' && url.pathname === '/api/admin/monitor-admins';
-    if (!publicAuthRoutes.has(url.pathname) && !currentProfessional(req) && !(url.pathname.startsWith('/api/admin/') && currentMonitorProfessional(req)) && !((isMonitorSnapshot || isMonitorAdminCreation) && currentMonitorProfessional(req))) {
+    const isAdminStreamManagement = (req.method === 'POST' && ['/api/obs/connect', '/api/obs/stream', '/api/destinations'].includes(url.pathname))
+      || (req.method === 'DELETE' && /^\/api\/destinations\/[\w-]+$/.test(url.pathname));
+    if (!publicAuthRoutes.has(url.pathname) && !currentProfessional(req) && !(url.pathname.startsWith('/api/admin/') && currentMonitorProfessional(req)) && !((isMonitorSnapshot || isMonitorAdminCreation) && currentMonitorProfessional(req)) && !(isAdminStreamManagement && currentAdminProfessional(req))) {
       return json(res, 401, { error: 'Inicia sesión con Firebase para acceder al contenido de INETER.' });
     }
     if (req.method === 'POST' && url.pathname === '/api/presence') {
@@ -1045,6 +1349,10 @@ async function handleHttpRequest(req, res) {
       const user = currentAdminProfessional(req) || currentMonitorProfessional(req);
       const canMonitor = ['admin','monitor_admin'].includes(user?.role);
       return json(res, 200, { isAdmin: user?.role === 'admin', canMonitor, bootstrapAvailable: false });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/admin/stream') {
+      if (!currentAdminProfessional(req)) return json(res, 403, { error: 'Solo la cuenta administradora principal puede controlar la transmisión.' });
+      return json(res, 200, publicState());
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/monitor') {
       const mainAdmin = currentProfessional(req);
@@ -1274,6 +1582,10 @@ async function handleHttpRequest(req, res) {
         return json(res, duplicate ? 409 : 400, { error: duplicate ? 'Firebase ya tiene una cuenta con ese correo.' : `Firebase no pudo crear la cuenta: ${String(error.message || error).slice(0, 200)}` });
       } finally { adminCreationEmails.delete(email); }
     }
+    if (url.pathname === '/api/admin/videos' && req.method === 'GET') {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      return json(res, 200, { videos: listRecordings(), broadcast: publicVideoBroadcast() });
+    }
     if (req.method === 'POST' && url.pathname === '/api/admin/videos') {
       if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
       if (!/^video\/mp4(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return json(res, 415, { error: 'Elige un archivo MP4.' });
@@ -1290,12 +1602,124 @@ async function handleHttpRequest(req, res) {
       const destination = path.join(vodDir, filename);
       try {
         const size = await saveUploadedVideo(req, destination, maxBytes);
-        return json(res, 201, { name: filename, title, size, url: `/recordings/biblioteca/${encodeURIComponent(filename)}` });
+        const video = {
+          id: crypto.randomUUID(),
+          filename: path.join('biblioteca', filename),
+          title,
+          createdAt: new Date().toISOString(),
+          thumbnailFilename: '',
+          subtitleFilename: '',
+          subtitleLanguage: 'es'
+        };
+        state.videos.push(video);
+        saveState();
+        return json(res, 201, { video: { ...video, name: filename, size, url: `/recordings/biblioteca/${encodeURIComponent(filename)}` } });
       } catch (error) {
         fs.rmSync(destination, { force: true });
+        state.videos = state.videos.filter(video => video.filename !== path.join('biblioteca', filename));
         if (!res.headersSent) return json(res, error.message.includes('límite') ? 413 : 400, { error: error.message || 'No se pudo guardar el video.' });
         return;
       }
+    }
+    const videoAssetMatch = url.pathname.match(/^\/api\/admin\/videos\/([a-f0-9-]{36})\/(thumbnail|subtitles)$/i);
+    if (req.method === 'POST' && videoAssetMatch) {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const video = state.videos.find(item => item.id === videoAssetMatch[1]);
+      if (!video) return json(res, 404, { error: 'Video no encontrado en la biblioteca.' });
+      const assetType = videoAssetMatch[2].toLowerCase();
+      const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      let extension;
+      let maxBytes;
+      let maxMessage;
+      if (assetType === 'thumbnail') {
+        extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' })[contentType];
+        maxBytes = 8 * 1024 * 1024;
+        maxMessage = 'La miniatura supera el límite de 8 MB.';
+        if (!extension) { req.resume(); return json(res, 415, { error: 'La miniatura debe ser JPG, PNG o WebP.' }); }
+      } else {
+        maxBytes = 2 * 1024 * 1024;
+        maxMessage = 'Los subtítulos superan el límite de 2 MB.';
+        if (!['text/vtt', 'application/octet-stream'].includes(contentType)) { req.resume(); return json(res, 415, { error: 'Los subtítulos deben estar en formato WebVTT (.vtt).' }); }
+      }
+      const declaredSize = Number(req.headers['content-length'] || 0);
+      if (declaredSize > maxBytes) { req.resume(); return json(res, 413, { error: maxMessage }); }
+      const vodDir = path.join(recordingsDir, 'biblioteca');
+      const filename = `${video.id}-${crypto.randomUUID()}.${assetType === 'thumbnail' ? extension : 'vtt'}`;
+      const destination = path.join(vodDir, filename);
+      const previousThumbnail = video.thumbnailFilename;
+      const previousSubtitle = video.subtitleFilename;
+      const previousLanguage = video.subtitleLanguage;
+      let metadataSaved = false;
+      try {
+        await saveUploadedAsset(req, destination, maxBytes, maxMessage);
+        let language = video.subtitleLanguage || 'es';
+        if (assetType === 'thumbnail') {
+          const imageBytes = await fs.promises.readFile(destination);
+          const validImage = extension === 'jpg'
+            ? imageBytes[0] === 0xff && imageBytes[1] === 0xd8 && imageBytes[2] === 0xff
+            : extension === 'png'
+              ? imageBytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+              : imageBytes.subarray(0, 4).toString() === 'RIFF' && imageBytes.subarray(8, 12).toString() === 'WEBP';
+          if (!validImage) throw new Error('El contenido no coincide con una imagen JPG, PNG o WebP válida.');
+        } else {
+          const contents = await fs.promises.readFile(destination, 'utf8');
+          if (!/^\uFEFF?WEBVTT(?:[ \t].*)?(?:\r?\n|$)/.test(contents)) throw new Error('El archivo no contiene un encabezado WebVTT válido.');
+          language = String(req.headers['x-subtitle-language'] || 'es').trim();
+          if (!/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)) throw new Error('El idioma de los subtítulos no es válido.');
+        }
+        const previous = assetType === 'thumbnail' ? video.thumbnailFilename : video.subtitleFilename;
+        if (assetType === 'thumbnail') video.thumbnailFilename = filename;
+        else {
+          video.subtitleFilename = filename;
+          video.subtitleLanguage = language;
+        }
+        saveState();
+        metadataSaved = true;
+        if (previous) fs.rmSync(path.join(vodDir, path.basename(previous)), { force: true });
+        return json(res, 200, { video: listRecordings().find(item => item.id === video.id) });
+      } catch (error) {
+        if (metadataSaved) {
+          console.error('No se pudo limpiar el archivo complementario anterior:', error);
+          return json(res, 500, { error: 'El archivo se guardó, pero no se pudo limpiar la versión anterior.' });
+        }
+        video.thumbnailFilename = previousThumbnail;
+        video.subtitleFilename = previousSubtitle;
+        video.subtitleLanguage = previousLanguage;
+        fs.rmSync(destination, { force: true });
+        return json(res, error.message.includes('límite') ? 413 : 400, { error: error.message || 'No se pudo guardar el archivo complementario.' });
+      }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/video-broadcast') {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const body = await readBody(req).catch(() => null);
+      if (body?.action === 'stop') {
+        if (!videoBroadcastIsActive()) return json(res, 409, { error: 'No hay una transmisión de video activa o en cuenta regresiva.' });
+        stopVideoBroadcast();
+        return json(res, 200, { broadcast: publicVideoBroadcast() });
+      }
+      if (body?.action !== 'start') return json(res, 400, { error: 'Acción de transmisión no válida.' });
+      if (videoBroadcastIsActive()) return json(res, 409, { error: 'Ya hay una transmisión de video activa o en cuenta regresiva.' });
+      const video = listRecordings().find(item => item.id === String(body.videoId || ''));
+      if (!video) return json(res, 404, { error: 'Selecciona un video disponible en la biblioteca.' });
+      const delaySeconds = Number(body.delaySeconds);
+      if (!Number.isInteger(delaySeconds) || delaySeconds < 0 || delaySeconds > 600) return json(res, 400, { error: 'El tiempo de previa debe estar entre 0 y 600 segundos.' });
+      videoBroadcast = {
+        id: crypto.randomUUID(),
+        videoId: video.id,
+        title: video.title,
+        status: 'programada',
+        delaySeconds,
+        startAt: new Date(Date.now() + delaySeconds * 1000).toISOString(),
+        startedAt: null,
+        endedAt: null,
+        error: '',
+        jobs: [],
+        timer: null
+      };
+      const broadcast = videoBroadcast;
+      if (delaySeconds) broadcast.timer = setTimeout(() => startVideoBroadcast(broadcast), delaySeconds * 1000);
+      else setImmediate(() => startVideoBroadcast(broadcast));
+      return json(res, 202, { broadcast: publicVideoBroadcast() });
     }
     if (req.method === 'GET' && url.pathname === '/api/auth/me') {
       return json(res, 200, { professional: safeProfessional(currentProfessional(req)), hasProfessionals: state.professionals.length > 0 });
@@ -1371,6 +1795,75 @@ async function handleHttpRequest(req, res) {
       saveState();
       return json(res, 201, { liked: true, likes: state.likes[sessionKey], sessionId: currentSessionId });
     }
+    if (req.method === 'GET' && url.pathname === '/api/obs/production') {
+      if (!state.obs?.secret) return json(res, 409, { error: 'Conecta OBS para consultar los ajustes de video y escenas.' });
+      try {
+        const [videoSettings, sceneList, currentScene, recordingStatus] = await Promise.all([
+          obsRequest('GetVideoSettings'),
+          obsRequest('GetSceneList'),
+          obsRequest('GetCurrentProgramScene'),
+          obsRequest('GetRecordStatus')
+        ]);
+        return json(res, 200, {
+          videoSettings: {
+            baseWidth: Number(videoSettings.baseWidth),
+            baseHeight: Number(videoSettings.baseHeight),
+            outputWidth: Number(videoSettings.outputWidth),
+            outputHeight: Number(videoSettings.outputHeight),
+            fpsNumerator: Number(videoSettings.fpsNumerator),
+            fpsDenominator: Number(videoSettings.fpsDenominator)
+          },
+          scenes: (sceneList.scenes || []).map(scene => ({ sceneName: String(scene.sceneName || '') })).filter(scene => scene.sceneName),
+          currentScene: String(currentScene.currentProgramSceneName || ''),
+          recording: !!recordingStatus.outputActive
+        });
+      } catch (error) { return json(res, 502, { error: `No se pudieron consultar los ajustes de OBS: ${error.message}` }); }
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/obs/video-settings') {
+      if (!state.obs?.secret) return json(res, 409, { error: 'Conecta OBS antes de cambiar el formato de video.' });
+      const body = await readBody(req).catch(() => null);
+      const profile = Object.hasOwn(obsVideoProfiles, body?.profile) ? obsVideoProfiles[body.profile] : null;
+      const fps = Number(body?.fps);
+      if (!profile || ![24, 25, 30, 50, 60].includes(fps)) return json(res, 400, { error: 'Selecciona un formato y una frecuencia de cuadros válidos.' });
+      try {
+        const streamStatus = await obsRequest('GetStreamStatus');
+        const recordingStatus = await obsRequest('GetRecordStatus');
+        obsStreaming = !!streamStatus.outputActive;
+        if (obsStreaming || recordingStatus.outputActive || live) return json(res, 409, { error: 'Detén la transmisión y la grabación antes de cambiar resolución o FPS.' });
+        await obsRequest('SetVideoSettings', { ...profile, fpsNumerator: fps, fpsDenominator: 1 });
+        const [videoSettings, sceneList, currentScene, currentRecordingStatus] = await Promise.all([
+          obsRequest('GetVideoSettings'),
+          obsRequest('GetSceneList'),
+          obsRequest('GetCurrentProgramScene'),
+          obsRequest('GetRecordStatus')
+        ]);
+        return json(res, 200, {
+          videoSettings: {
+            baseWidth: Number(videoSettings.baseWidth),
+            baseHeight: Number(videoSettings.baseHeight),
+            outputWidth: Number(videoSettings.outputWidth),
+            outputHeight: Number(videoSettings.outputHeight),
+            fpsNumerator: Number(videoSettings.fpsNumerator),
+            fpsDenominator: Number(videoSettings.fpsDenominator)
+          },
+          scenes: (sceneList.scenes || []).map(scene => ({ sceneName: String(scene.sceneName || '') })).filter(scene => scene.sceneName),
+          currentScene: String(currentScene.currentProgramSceneName || ''),
+          recording: !!currentRecordingStatus.outputActive
+        });
+      } catch (error) { return json(res, 502, { error: `OBS no pudo aplicar el formato: ${error.message}` }); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/obs/scene') {
+      if (!state.obs?.secret) return json(res, 409, { error: 'Conecta OBS antes de cambiar de escena.' });
+      const body = await readBody(req).catch(() => null);
+      const sceneName = String(body?.sceneName || '').trim();
+      if (!sceneName || sceneName.length > 100) return json(res, 400, { error: 'Selecciona una escena de OBS válida.' });
+      try {
+        const sceneList = await obsRequest('GetSceneList');
+        if (!(sceneList.scenes || []).some(scene => scene.sceneName === sceneName)) return json(res, 404, { error: 'La escena seleccionada ya no existe en OBS. Actualiza la lista.' });
+        await obsRequest('SetCurrentProgramScene', { sceneName });
+        return json(res, 200, { currentScene: sceneName });
+      } catch (error) { return json(res, 502, { error: `OBS no pudo cambiar la escena: ${error.message}` }); }
+    }
     if (req.method === 'GET' && url.pathname === '/api/obs/preview') {
       if (!state.obs?.secret) return json(res, 409, { error: 'Conecta OBS para ver la vista previa.' });
       try {
@@ -1384,18 +1877,35 @@ async function handleHttpRequest(req, res) {
       const host = String(body?.host || 'host.docker.internal').trim();
       const port = Number(body?.port || 4455);
       if (!/^[a-zA-Z0-9.\-]+$/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) return json(res, 400, { error: 'Host o puerto de OBS no válido.' });
+      const previousObs = state.obs;
+      const submittedPassword = typeof body?.password === 'string' ? body.password : '';
+      const secret = submittedPassword.length
+        ? encrypt(submittedPassword)
+        : previousObs?.secret || encrypt('');
       const oldSocket = obsSocket;
       obsConnected = false; obsStreaming = false; obsConnectPromise = null; obsPending.forEach(item => { clearTimeout(item.timeout); item.reject(new Error('Configuración de OBS actualizada.')); }); obsPending.clear();
       try { oldSocket?.close(); } catch {}
-      state.obs = { host, port, secret: encrypt(String(body?.password || '')) }; saveState();
+      obsSocket = null;
+      state.obs = { host, port, secret };
       try {
         await connectObs();
         const current = await obsRequest('GetStreamStatus');
         obsStreaming = !!current.outputActive;
         if (!obsStreaming) await configureObsStream();
         else obsError = 'OBS está transmitiendo; detén la emisión para aplicar el destino RTMP de En Vivo.';
+        saveState();
         return json(res, 200, publicState());
-      } catch (error) { obsError = error.message; return json(res, 502, { ...publicState(), error: obsError }); }
+      } catch (error) {
+        const failedSocket = obsSocket;
+        obsSocket = null;
+        obsConnected = false;
+        obsStreaming = false;
+        obsConnectPromise = null;
+        try { failedSocket?.close(); } catch {}
+        state.obs = previousObs;
+        obsError = error.message;
+        return json(res, 502, { ...publicState(), error: obsError });
+      }
     }
     if (req.method === 'POST' && url.pathname === '/api/obs/stream') {
       const body = await readBody(req).catch(() => null);
@@ -1403,6 +1913,7 @@ async function handleHttpRequest(req, res) {
       try {
         if (!state.obs?.secret) throw new Error('Conecta OBS primero desde el panel.');
         if (body.action === 'start') {
+          if (videoBroadcastIsActive()) throw new Error('Hay una transmisión de video activa o en cuenta regresiva. Deténla antes de iniciar OBS.');
           const invalidDestination = state.destinations.find(destination => {
             try { return !validRtmp(destination.serverUrl) || !decrypt(destination.secret).trim(); }
             catch { return true; }
@@ -1469,9 +1980,19 @@ async function handleHttpRequest(req, res) {
     let relative;
     try { relative = decodeURIComponent(url.pathname.slice('/recordings/'.length)).replace(/[\\/]+/g, path.sep); } catch { res.writeHead(400); return res.end('Ruta no válida'); }
     const file = path.resolve(recordingsDir, relative);
-    if (!file.startsWith(recordingsDir + path.sep) || !file.toLowerCase().endsWith('.mp4') || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); return res.end('No encontrado'); }
+    const extension = path.extname(file).toLowerCase();
+    if (!file.startsWith(recordingsDir + path.sep) || !['.mp4', '.vtt', '.jpg', '.jpeg', '.png', '.webp'].includes(extension) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); return res.end('No encontrado'); }
     const name = path.basename(file);
     const size = fs.statSync(file).size;
+    if (extension !== '.mp4') {
+      res.writeHead(200, {
+        'content-type': mime[extension] || 'application/octet-stream',
+        'content-length': size,
+        'cache-control': 'private, max-age=300',
+        'x-content-type-options': 'nosniff'
+      });
+      return fs.createReadStream(file).pipe(res);
+    }
     const range = req.headers.range;
     res.setHeader('content-type', 'video/mp4');
     res.setHeader('accept-ranges', 'bytes');
@@ -1497,7 +2018,7 @@ async function handleHttpRequest(req, res) {
   const publicStaticFiles = new Set([
     'index.html', 'monitor.html', 'admin.html', 'styles.css', 'backend.css', 'monitoring.css', 'monitor-dashboard.css', 'monitor-dashboard.js', 'admin-dashboard.css', 'admin-monitor.css', 'admin-dashboard.js', 'app.js',
     'home-climate.js', 'national-climate.js', 'firebase-client.js', 'firebase-messaging-sw.js',
-    'assets/ineter-logo.png'
+    'assets/ineter-logo.png', 'assets/ineter-logo.svg', 'assets/hls/hls.min.js', 'streaming-controls.css', 'admin-theme.css'
   ]);
   if (!publicStaticFiles.has(relativeStaticPath)) { res.writeHead(404); return res.end('No encontrado'); }
   fs.readFile(filePath, (error, content) => {
@@ -1511,6 +2032,7 @@ const bindAddress = process.env.BIND_ADDRESS || '127.0.0.1';
 server.listen(port, bindAddress, () => console.log(`Aplicación INETER escuchando en ${port}`));
 if (adminPort !== port) adminServer.listen(adminPort, bindAddress, () => console.log(`Dashboard administrativo escuchando en ${adminPort}`));
 process.on('SIGTERM', () => {
+  stopVideoBroadcast();
   stopRelay();
   const servers = adminPort === port ? [server] : [server, adminServer];
   let remaining = servers.length;

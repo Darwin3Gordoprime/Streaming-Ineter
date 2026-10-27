@@ -161,6 +161,8 @@ async function exchangeFirebaseSession(user, name = '') {
     lastSessionData = result;
     pendingNames.delete(user.uid);
     document.body.classList.remove('auth-required');
+    const gate = document.getElementById('firebase-auth-gate');
+    if (gate) gate.setAttribute('aria-hidden', 'true');
     showGateError();
     document.dispatchEvent(new CustomEvent('firebase-auth-session-ready', { detail: result }));
     if (monitorLoginMode && hasAdminAccess) location.replace(monitorReturnPath);
@@ -179,6 +181,11 @@ function firebaseErrorMessage(error) {
     'auth/email-already-in-use': 'Ese correo ya tiene cuenta en Firebase. Inicia sesión o restablece su contraseña.',
     'auth/weak-password': 'La contraseña debe tener al menos 10 caracteres.',
     'auth/invalid-email': 'Escribe un correo válido.',
+    'auth/unauthorized-domain': `Firebase no autoriza el dominio ${location.hostname}. Agrégalo en Firebase Console → Authentication → Settings → Authorized domains.`,
+    'auth/api-key-not-valid': 'La clave web de Firebase no es válida para esta app. Revisa FIREBASE_API_KEY y que coincida con el proyecto configurado.',
+    'auth/project-not-found': 'Firebase no encuentra el proyecto configurado. Revisa FIREBASE_PROJECT_ID y la configuración de la app web.',
+    'auth/invalid-login-credentials': 'Firebase no aceptó el correo y la contraseña. Verifica que la cuenta exista en el mismo proyecto Firebase de esta app.',
+    'auth/user-disabled': 'Esta cuenta está deshabilitada en Firebase Authentication. Contacta a la persona administradora.',
     'auth/too-many-requests': 'Firebase bloqueó temporalmente los intentos desde esta cuenta o dispositivo. Deja de intentar por ahora y vuelve a probar más tarde; los intentos repetidos pueden prolongar el bloqueo.',
     'auth/network-request-failed': 'No se pudo conectar con Firebase. Revisa tu conexión a Internet.'
   };
@@ -211,6 +218,7 @@ async function firebaseSignOut() {
     lastSessionUid = null;
     lastSessionData = null;
     document.body.classList.add('auth-required');
+    document.getElementById('firebase-auth-gate')?.setAttribute('aria-hidden', 'false');
     document.dispatchEvent(new CustomEvent('firebase-auth-session-cleared'));
   } finally { explicitLogoutInProgress = false; }
 }
@@ -444,12 +452,17 @@ async function startFirebase() {
         lastSessionUid = null;
         lastSessionData = null;
         document.body.classList.add('auth-required');
+        document.getElementById('firebase-auth-gate')?.setAttribute('aria-hidden', 'false');
         if (hadBackendSession && !explicitLogoutInProgress) clearBackendSession();
         document.dispatchEvent(new CustomEvent('firebase-auth-session-cleared'));
         return;
       }
       try { await exchangeFirebaseSession(user); }
-      catch (error) { document.body.classList.add('auth-required'); showGateError(firebaseErrorMessage(error)); }
+      catch (error) {
+        document.body.classList.add('auth-required');
+        document.getElementById('firebase-auth-gate')?.setAttribute('aria-hidden', 'false');
+        showGateError(firebaseErrorMessage(error));
+      }
     });
     try {
       const analyticsSdk = await import(`${sdk}/firebase-analytics.js`);

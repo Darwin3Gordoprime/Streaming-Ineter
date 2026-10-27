@@ -2,11 +2,36 @@
 
 Esta carpeta prepara En Vivo para una VM Debian usando Docker Compose. La web se sirve por HTTPS con Caddy; OBS entra por RTMPS cifrado directo a MediaMTX. La API de MediaMTX y el puerto web de Node no se publican a Internet.
 
+## 0. Opción económica con Azure for Students
+
+La suscripción de estudiante incluye **750 horas al mes (12 meses) de cada uno de estos tamaños** y 100 USD de crédito:
+
+| Tamaño | vCPU | RAM | Precio aprox. (East US, Linux) |
+|---|---|---|---|
+| `Standard_B1s` | 1 | 1 GiB | ~7.60 USD/mes |
+| `Standard_B2ats_v2` | 2 | 1 GiB | ~6.90 USD/mes |
+| `Standard_B2pts_v2` (ARM) | 2 | 1 GiB | ~6.90 USD/mes |
+
+Cualquiera de los tres queda cubierto por las 750 horas gratuitas si mantienes **una sola VM** encendida. Recomendación: **`Standard_B2ats_v2`** (2 vCPU para FFmpeg), añadiendo el swap que ya crea `cloud-init.yaml`.
+
+Los 1 GiB de RAM son el límite real de esta app: Node, MediaMTX, Caddy y FFmpeg caben con swap para **una salida RTMP**, pero varias salidas simultáneas pueden agotar la memoria. Si necesitas más margen, usa el crédito de 100 USD para subir a `Standard_B1ms` (2 GiB, ~15 USD/mes) o `Standard_B2s` (4 GiB, ~30 USD/mes).
+
+Costos que **no** cubre la oferta gratuita y salen del crédito: disco del sistema (~5 USD/mes por 64 GB SSD estándar), IP pública estándar (~3.65 USD/mes) y tráfico de salida. Los primeros 100 GB/mes de egreso son gratuitos; a partir de ahí se cobra por GB, así que el número de espectadores del streaming es el factor que más encarece la factura.
+
+Para no gastar crédito cuando no transmites:
+
+```sh
+az vm deallocate -g rg-ineter -n vm-ineter   # detiene el cobro de cómputo, conserva discos
+az vm start -g rg-ineter -n vm-ineter
+```
+
+También puedes programar el apagado automático en el portal: **VM → Operaciones → Apagado automático**.
+
 ## 1. Preparar Azure y DNS
 
-1. Crea una VM Debian 12 con IP pública estática y almacenamiento administrado con espacio suficiente para las grabaciones. Reserva un dominio o subdominios y crea registros DNS `A` que apunten a la IP pública: uno para la web (`APP_DOMAIN`) y otro para RTMPS (`STREAM_DOMAIN`).
+1. Crea una VM Debian 12 con IP pública estática y almacenamiento administrado con espacio suficiente para las grabaciones. Reserva un dominio o subdominios y crea registros DNS `A` que apunten a la IP pública: uno para la web (`APP_DOMAIN`) y otro para RTMPS (`STREAM_DOMAIN`). Para que Docker quede instalado desde el primer arranque, pega `deploy/azure/cloud-init.yaml` en **Avanzado → Datos personalizados** al crear la VM (o usa `--custom-data` con Azure CLI).
 2. En el grupo de seguridad de red (NSG), permite entrada TCP 22 solo desde tu IP administrativa; TCP 80 y 443 para el sitio y los certificados; y TCP 1936 para la entrada RTMPS. No abras 3000, 1935, 8554 ni 9997. Azure documenta el acceso SSH y las reglas de entrada del NSG en su [guía para conectarse a una VM Linux](https://learn.microsoft.com/azure/virtual-machines/linux-vm-connect).
-3. Instala Docker Engine y el complemento Compose siguiendo la [guía oficial para Debian](https://docs.docker.com/engine/install/debian/). Habilita Docker para iniciar con el sistema.
+3. Si no usaste `cloud-init.yaml`, instala Docker Engine y el complemento Compose siguiendo la [guía oficial para Debian](https://docs.docker.com/engine/install/debian/) y habilita Docker para iniciar con el sistema (`sudo systemctl enable --now docker`). Con cloud-init, verifica al entrar por SSH con `docker --version` y `docker compose version`.
 
 ## 2. Copiar y proteger los datos
 

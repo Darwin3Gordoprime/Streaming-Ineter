@@ -36,6 +36,8 @@ services:
       INETER_INITIAL_ADMIN_EMAIL: ${INETER_INITIAL_ADMIN_EMAIL:-}
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase-service-account.json
       MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
+      MEDIAMTX_RTMP_BASE: rtmp://mediamtx:1935
       MEDIAMTX_RTSP_BASE: rtsp://mediamtx:8554
       OBS_WS_HOST: host.docker.internal
     volumes:
@@ -45,4 +47,3 @@ services:
         source: ${FIREBASE_SERVICE_ACCOUNT_FILE:-./firebase-service-account.json}
         target: /run/secrets/firebase-service-account.json
         read_only: true
-
