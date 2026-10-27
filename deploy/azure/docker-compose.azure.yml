@@ -1,6 +1,7 @@
 services:
   mediamtx:
-    ports:
+    ports: !override
+      - "0.0.0.0:1935:1935"
       - "1936:1936"
     volumes:
       - ./deploy/azure/mediamtx.yml:/mediamtx.yml:ro
@@ -10,6 +11,8 @@ services:
   app:
     environment:
       TRUST_PROXY: "1"
+      PUBLIC_RTMP_URL: "rtmp://${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}:1935/live"
+      OBS_INGEST_SERVER: "rtmp://${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}:1935/live"
 
   caddy:
     image: caddy:2

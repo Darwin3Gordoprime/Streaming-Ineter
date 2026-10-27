@@ -1,6 +1,7 @@
 logLevel: info
 rtmp: yes
-rtmpEncryption: strict
+rtmpEncryption: "optional"
+rtmpAddress: :1935
 rtmpsAddress: :1936
 rtmpServerKey: /run/secrets/rtmps/privkey.pem
 rtmpServerCert: /run/secrets/rtmps/fullchain.pem
