@@ -2,11 +2,8 @@ services:
   mediamtx:
     ports: !override
       - "0.0.0.0:1935:1935"
-      - "1936:1936"
     volumes:
       - ./deploy/azure/mediamtx.yml:/mediamtx.yml:ro
-      - /etc/letsencrypt/live/${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}/fullchain.pem:/run/secrets/rtmps/fullchain.pem:ro
-      - /etc/letsencrypt/live/${STREAM_DOMAIN:?Set STREAM_DOMAIN in the project .env}/privkey.pem:/run/secrets/rtmps/privkey.pem:ro
 
   app:
     environment:
