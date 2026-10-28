@@ -15,6 +15,7 @@ let systemBusy = false;
 let adminStreamState = null;
 let adminStreamBusy = false;
 let adminObsFormEdited = false;
+let adminYoutubeConfigEdited = false;
 let activeStudioTab = 'obs';
 let alertRefreshTimer = null;
 const visibleStudioKeys = new Set();
@@ -111,7 +112,10 @@ function setPanel(name) {
   if (name === 'reports') loadReports();
   if (name === 'videos') loadAdminVideos();
   if (name === 'system') updateSystemMetrics();
-  if (name === 'streaming') loadAdminStream();
+  if (name === 'streaming') {
+    loadAdminStream();
+    loadAdminYoutubeConfig();
+  }
 }
 function setAdminMenuOpen(open) {
   const shell = $('#admin-shell');
@@ -357,6 +361,30 @@ function renderAdminStream() {
     $('#admin-stream-obs-form').elements.port.value = String(obs.port || 4458);
   }
 }
+async function loadAdminYoutubeConfig() {
+  const status = $('#admin-youtube-status');
+  const feedback = $('#admin-youtube-feedback');
+  try {
+    const { config } = await api('/api/admin/youtube-config');
+    status.textContent = config.configured ? 'CONFIGURADO' : 'SIN CONFIGURAR';
+    status.classList.toggle('is-live', config.configured);
+    if (!adminYoutubeConfigEdited) {
+      const form = $('#admin-youtube-form');
+      form.elements.accountName.value = config.accountName || '';
+      form.elements.accountEmail.value = config.accountEmail || '';
+      form.elements.serverUrl.value = config.serverUrl || '';
+      form.elements.key.value = '';
+    }
+    feedback.textContent = config.keyConfigured
+      ? 'Clave de transmisión guardada y cifrada. Déjala vacía para conservarla.'
+      : 'Aún no se ha guardado una clave de transmisión.';
+    feedback.classList.remove('error');
+  } catch (error) {
+    status.textContent = 'SIN ACTUALIZACIÓN';
+    feedback.textContent = `No se pudo consultar la configuración: ${error.message}`;
+    feedback.classList.add('error');
+  }
+}
 async function loadAdminStream() {
   if (adminStreamBusy || document.hidden || $('#admin-shell').hidden) return;
   adminStreamBusy = true;
@@ -506,9 +534,37 @@ $('#admin-stream-destination-form').addEventListener('submit', async event => {
   } finally { button.disabled = false; }
 });
 $('#admin-stream-destination-form').elements.platform.addEventListener('change', event => {
-  $('#admin-stream-youtube-help').textContent = event.currentTarget.value === 'YouTube'
-    ? 'Para YouTube, activa Auto-start en el evento de YouTube Studio antes de transmitir. La clave se cifra y no se muestra después de guardarla.'
-    : 'Escribe la URL RTMP y la clave entregadas por la plataforma. La clave se cifra y no se muestra después de guardarla.';
+  $('#admin-stream-youtube-help').textContent = 'La clave de transmisión se cifra y no se muestra después de guardarla.';
+});
+$('#admin-youtube-form').addEventListener('input', () => { adminYoutubeConfigEdited = true; });
+$('#admin-youtube-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $('#admin-youtube-save');
+  const feedback = $('#admin-youtube-feedback');
+  button.disabled = true;
+  feedback.textContent = 'Guardando configuración de YouTube…';
+  feedback.classList.remove('error');
+  try {
+    const { config } = await api('/api/admin/youtube-config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        accountName: form.elements.accountName.value.trim(),
+        accountEmail: form.elements.accountEmail.value.trim(),
+        serverUrl: form.elements.serverUrl.value.trim(),
+        key: form.elements.key.value
+      })
+    });
+    form.elements.key.value = '';
+    adminYoutubeConfigEdited = false;
+    $('#admin-youtube-status').textContent = config.configured ? 'CONFIGURADO' : 'SIN CONFIGURAR';
+    $('#admin-youtube-status').classList.toggle('is-live', config.configured);
+    await loadAdminStream();
+    feedback.textContent = 'Configuración guardada. La clave quedó cifrada y no se devolverá al navegador.';
+  } catch (error) {
+    feedback.textContent = error.message;
+    feedback.classList.add('error');
+  } finally { button.disabled = false; }
 });
 $('#admin-stream-destination-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-admin-stream-remove]');
@@ -713,7 +769,8 @@ function renderAdminVideos() {
       ? `<button class="button secondary" type="button" data-video-broadcast="stop" data-video-id="${escapeHtml(video.id)}">Detener video</button>`
       : `<label class="video-delay-label">Iniciar en<select data-video-delay="${escapeHtml(video.id)}" ${active ? 'disabled' : ''}><option value="0">Ahora</option><option value="30">30 segundos</option><option value="60">1 minuto</option><option value="120">2 minutos</option><option value="300">5 minutos</option><option value="600">10 minutos</option></select></label><button class="button primary" type="button" data-video-broadcast="start" data-video-id="${escapeHtml(video.id)}" ${active ? 'disabled' : ''}>Transmitir</button>`;
     const categoryOptions = Object.entries(adminVideoCategories).map(([category, label]) => `<option value="${category}" ${video.category === category ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
-    return `<article class="admin-video-card"><div class="admin-video-poster">${preview}</div><div class="admin-video-info"><h4>${escapeHtml(video.title)}</h4><small>${escapeHtml(formatDate(video.createdAt))} · ${formatBytes(video.size)}${video.subtitlesUrl ? ' · Subtítulos' : ''}</small><div class="admin-video-assets"><label>Categoría<select data-video-category="${escapeHtml(video.id)}">${categoryOptions}</select></label><label>Miniatura<input type="file" accept="image/jpeg,image/png,image/webp" data-video-asset="thumbnail" data-video-id="${escapeHtml(video.id)}" /></label><label>Subtítulos WebVTT<input type="file" accept=".vtt,text/vtt" data-video-asset="subtitles" data-video-id="${escapeHtml(video.id)}" /></label></div><div class="admin-video-controls">${action}</div></div></article>`;
+    const deleteAction = `<button class="button secondary" type="button" data-video-delete="${escapeHtml(video.id)}" data-video-title="${escapeHtml(video.title)}" ${ownsBroadcast ? 'disabled title="Detén la transmisión antes de eliminar este video."' : ''}>Eliminar video</button>`;
+    return `<article class="admin-video-card"><div class="admin-video-poster">${preview}</div><div class="admin-video-info"><h4>${escapeHtml(video.title)}</h4><small>${escapeHtml(formatDate(video.createdAt))} · ${formatBytes(video.size)}${video.subtitlesUrl ? ' · Subtítulos' : ''}</small><div class="admin-video-assets"><label>Categoría<select data-video-category="${escapeHtml(video.id)}">${categoryOptions}</select></label><label>Miniatura<input type="file" accept="image/jpeg,image/png,image/webp" data-video-asset="thumbnail" data-video-id="${escapeHtml(video.id)}" /></label><label>Subtítulos WebVTT<input type="file" accept=".vtt,text/vtt" data-video-asset="subtitles" data-video-id="${escapeHtml(video.id)}" /></label></div><div class="admin-video-controls">${action}${deleteAction}</div></div></article>`;
   }).join('') : '<p class="empty-admin-videos">Aún no hay videos en la biblioteca. Sube un MP4 para empezar.</p>';
   $$('[data-video-delay]', list).forEach(select => {
     if (selectedDelays.has(select.dataset.videoDelay)) select.value = selectedDelays.get(select.dataset.videoDelay);
@@ -735,10 +792,11 @@ function uploadAdminBinary(url, file, contentType, headers = {}, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
+    xhr.timeout = 0;
     xhr.withCredentials = true;
     xhr.setRequestHeader('content-type', contentType);
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
-    xhr.upload.onprogress = event => { if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total); };
+    xhr.upload.onprogress = event => { if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total, event.loaded, event.total); };
     xhr.onload = () => {
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch {}
@@ -746,6 +804,8 @@ function uploadAdminBinary(url, file, contentType, headers = {}, onProgress) {
       else reject(new Error(data.error || `No se pudo subir el archivo (${xhr.status}).`));
     };
     xhr.onerror = () => reject(new Error('Se perdió la conexión durante la subida.'));
+    xhr.ontimeout = () => reject(new Error('La transferencia del archivo agotó el tiempo de espera. Vuelve a intentarlo con la conexión estable.'));
+    xhr.onabort = () => reject(new Error('La transferencia del archivo se canceló antes de completarse.'));
     xhr.send(file);
   });
 }
@@ -767,7 +827,10 @@ $('#video-form').addEventListener('submit', async event => {
     const data = await uploadAdminBinary('/api/admin/videos', file, 'video/mp4', {
       'x-video-title': encodeURIComponent(form.elements.title.value.trim()),
       'x-video-category': form.elements.category.value
-    }, value => { progress.value = Math.round(value * 80); });
+    }, (value, loaded, total) => {
+      progress.value = Math.round(value * 80);
+      message.textContent = `Subiendo video… ${Math.round(value * 100)} % (${formatBytes(loaded)} de ${formatBytes(total)}).`;
+    });
     const video = data.video;
     if (thumbnail) {
       message.textContent = 'Video publicado. Subiendo miniatura…';
@@ -796,6 +859,19 @@ $('#video-form').addEventListener('submit', async event => {
   }
 });
 $('#admin-video-list').addEventListener('click', async event => {
+  const deleteButton = event.target.closest('[data-video-delete]');
+  if (deleteButton) {
+    if (!window.confirm(`¿Eliminar “${deleteButton.dataset.videoTitle}” y sus archivos de la biblioteca?`)) return;
+    deleteButton.disabled = true;
+    try {
+      await api(`/api/admin/vod/${encodeURIComponent(deleteButton.dataset.videoDelete)}`, { method: 'DELETE' });
+      await loadAdminVideos();
+    } catch (error) {
+      setError(error.message);
+      deleteButton.disabled = false;
+    }
+    return;
+  }
   const button = event.target.closest('[data-video-broadcast]');
   if (!button) return;
   const action = button.dataset.videoBroadcast;

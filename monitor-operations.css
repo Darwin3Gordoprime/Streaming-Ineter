@@ -26,32 +26,6 @@
 .monitor-control-status{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-top:22px}
 .monitor-control-status span{padding:7px 10px;border:1px solid #457065;border-radius:999px;background:#173d36;color:#9cf0cc;font-size:8px;font-weight:800;letter-spacing:.1em}
 .monitor-control-status small{color:#9aafaa;font-size:9px}
-.monitor-screen-wall{position:relative;display:grid;grid-template-columns:1.45fr .8fr;grid-template-rows:minmax(125px,1fr) 42px;gap:10px;min-width:0;transform:perspective(900px) rotateY(-5deg)}
-.monitor-screen{position:relative;min-width:0;overflow:hidden;border:1px solid #3c5753;border-radius:7px;background:linear-gradient(145deg,#0c1517,#101d1d);box-shadow:0 8px 19px #0007,inset 0 0 20px #65a38c0a}
-.monitor-screen:after{position:absolute;inset:0;pointer-events:none;content:"";background:repeating-linear-gradient(0deg,transparent 0 3px,#e7fff505 4px)}
-.monitor-screen-main{grid-row:1;grid-column:1;padding:13px 14px 10px}
-.monitor-screen-head{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:8px;color:#92aaa2;font-size:7px;font-weight:800;letter-spacing:.12em}
-.monitor-screen-head b{color:#68d6a8;font-size:6px;letter-spacing:.08em}
-.monitor-screen-main svg{display:block;width:100%;height:93px;margin-top:7px;overflow:visible}
-.screen-gridline{fill:none;stroke:#42605b;stroke-width:1;stroke-dasharray:3 5;opacity:.55}
-.screen-line{fill:none;stroke-width:2.5;vector-effect:non-scaling-stroke}
-.screen-line-a{stroke:#61dfa7;filter:drop-shadow(0 0 4px #61dfa799)}
-.screen-line-b{stroke:#49a9cf;opacity:.85}
-.monitor-screen-bars{display:flex;align-items:flex-end;gap:5px;height:19px;margin-top:1px}
-.monitor-screen-bars i{flex:1;height:var(--h,55%);border-radius:2px 2px 0 0;background:linear-gradient(0deg,#168b78,#56d5a3);opacity:.8}
-.monitor-screen-bars i:nth-child(3n){--h:82%}.monitor-screen-bars i:nth-child(3n + 1){--h:40%}.monitor-screen-bars i:nth-child(3n + 2){--h:64%}
-.monitor-screen-stack{display:grid;grid-template-rows:1fr 1fr;gap:10px;min-height:0}
-.monitor-screen-mini{padding:10px 11px}
-.monitor-gauges{display:flex;gap:6px;margin-top:11px}
-.monitor-gauges i{width:32px;height:18px;border:3px solid #e1a84d;border-bottom:0;border-radius:30px 30px 0 0;opacity:.85}
-.monitor-gauges i:nth-child(2){border-color:#54d5a4}.monitor-gauges i:nth-child(3){border-color:#4ea9d0}
-.monitor-screen-wave{height:13px;margin-top:7px;background:linear-gradient(165deg,transparent 35%,#52d9a2 37% 41%,transparent 43%),linear-gradient(15deg,transparent 49%,#4385a9 51% 55%,transparent 57%);border-bottom:1px solid #35504b}
-.monitor-mini-bars{display:flex;align-items:flex-end;gap:4px;height:35px;margin-top:8px}
-.monitor-mini-bars i{flex:1;height:var(--h,60%);background:#55cc98;border-radius:2px 2px 0 0;opacity:.82}
-.monitor-mini-bars i:nth-child(3n){--h:90%;background:#dfaa51}.monitor-mini-bars i:nth-child(3n + 1){--h:45%}.monitor-mini-bars i:nth-child(3n + 2){--h:70%;background:#48a5c8}
-.monitor-screen-foot{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 13px;color:#91aaa2;font-size:7px;font-weight:800;letter-spacing:.1em}
-.monitor-screen-foot b{color:#bed0ca;font-size:6px}
-.monitor-screen-foot i{width:7px;height:7px;margin-left:auto;border-radius:50%;background:#60dda6;box-shadow:0 0 10px #60dda6}
 .monitor-hero-corner{position:absolute;width:26px;height:26px;border-color:#d5e9de;opacity:.65}
 .monitor-hero-corner-a{top:10px;left:10px;border-top:2px solid;border-left:2px solid;border-radius:9px 0 0}
 .monitor-hero-corner-b{right:10px;bottom:10px;border-right:2px solid;border-bottom:2px solid;border-radius:0 0 9px}
@@ -92,8 +66,9 @@
 .monitor-admin-entry a:hover{text-decoration:underline}
 .monitor-admin-create-notice{margin-top:14px;padding:14px 16px;border:1px solid #ead9b5;border-radius:11px;background:#fff9ed;color:#77551c;font-size:11px;line-height:1.5}
 .monitor-admin-create-notice[hidden]{display:none}
-@media(max-width:1050px){.monitor-content{padding:20px}.monitor-control-hero{grid-template-columns:minmax(210px,.8fr) minmax(340px,1.2fr);gap:18px;padding:27px}}
-@media(max-width:760px){.monitor-control-hero{grid-template-columns:1fr;gap:22px}.monitor-control-copy{max-width:none}.monitor-screen-wall{max-width:620px;width:100%;margin:0 auto;transform:none}}
-@media(max-width:680px){.monitor-sidebar{background:#111c1d}.monitor-control-hero{min-height:0;padding:25px 21px}.monitor-control-copy h2{font-size:29px}.monitor-screen-wall{grid-template-rows:112px 40px}.monitor-screen-main svg{height:62px}.monitor-screen-mini{padding:8px}.monitor-screen-head{font-size:6px}.monitor-content{padding:16px 14px 30px}.monitor-admin-overview{gap:9px}.monitor-metric{padding:13px}.monitor-metric>strong{font-size:21px}}
-@media(max-width:390px){.monitor-screen-wall{grid-template-columns:1.25fr .8fr;gap:6px}.monitor-screen-stack{gap:6px}.monitor-screen-main{padding:10px}.monitor-screen-foot{padding:0 8px;font-size:6px}.monitor-control-status{align-items:flex-start;flex-direction:column;gap:7px}}
-@media(prefers-reduced-motion:no-preference){.monitor-control-kicker i,.monitor-screen-foot i{animation:monitor-pulse 1.8s ease-in-out infinite}@keyframes monitor-pulse{50%{opacity:.5;box-shadow:0 0 4px #51d7a855}}}
+@media(max-width:1050px){.monitor-content{padding:20px}.monitor-control-hero{gap:18px;padding:27px}}
+@media(max-width:760px){.monitor-control-hero{grid-template-columns:1fr;gap:22px}.monitor-control-copy{max-width:none}}
+@media(max-width:680px){.monitor-sidebar{background:#111c1d}.monitor-control-hero{min-height:0;padding:25px 21px}.monitor-control-copy h2{font-size:29px}.monitor-content{padding:16px 14px 30px}.monitor-admin-overview{gap:9px}.monitor-metric{padding:13px}.monitor-metric>strong{font-size:21px}}
+@media(max-width:390px){.monitor-control-status{align-items:flex-start;flex-direction:column;gap:7px}}
+@media(prefers-reduced-motion:no-preference){.monitor-control-kicker i{animation:monitor-pulse 1.8s ease-in-out infinite}@keyframes monitor-pulse{50%{opacity:.5;box-shadow:0 0 4px #51d7a855}}}
+.monitor-control-hero{grid-template-columns:1fr}

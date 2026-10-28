@@ -9,9 +9,9 @@ let streamEventSource = null;
 let authMode = 'login';
 let authState = { professional: null, hasProfessionals: false };
 let renderedRecordingSignature = null;
-let renderedHomeRecordingSignature = null;
 let recordingFilter = 'all';
 let recordingsFilterRequest = 0;
+let recordingSearchTimer = null;
 const platformSymbols = { YouTube: '▶', Twitch: '▣', Facebook: 'f', TikTok: '♪', Personalizado: '↗' };
 const platformClasses = { YouTube: 'youtube', Twitch: 'twitch', Facebook: 'facebook', TikTok: 'tiktok', Personalizado: 'personalizado' };
 const recordingCategories = {
@@ -69,7 +69,7 @@ function renderDestinations() {
   $('#platform-list').innerHTML = destinations.map(d => {
     const labels = { conectando: 'Conectando', enviando: 'Enviando señal', detenido: 'Detenido', error: 'Error de salida' };
     const status = appState?.live ? (labels[d.outputStatus] || 'Esperando salida') : 'Listo';
-    return `<div class="platform-row"><span class="platform-icon ${platformClasses[d.platform] || 'personalizado'}">${platformSymbols[d.platform] || '↗'}</span><span class="platform-meta"><b>${escapeHtml(d.name)}</b><small>${escapeHtml(d.platform)} · Clave cifrada</small></span><span class="row-live ${d.outputStatus === 'error' ? 'output-error' : ''}">● ${escapeHtml(status)}</span><button class="remove-destination" data-remove="${escapeHtml(d.id)}" aria-label="Quitar ${escapeHtml(d.name)}">×</button></div>`;
+    return `<div class="platform-row"><span class="platform-icon ${platformClasses[d.platform] || 'personalizado'}">${platformSymbols[d.platform] || '↗'}</span><span class="platform-meta"><b>${escapeHtml(d.name)}</b><small>${escapeHtml(d.platform)} · Clave cifrada</small></span><span class="row-live ${d.outputStatus === 'error' ? 'output-error' : ''}">● ${escapeHtml(status)}</span></div>`;
   }).join('');
   $('#nav-count').textContent = destinations.length;
   $('#dest-status').textContent = `${destinations.length} ${destinations.length === 1 ? 'DESTINO' : 'DESTINOS'}`;
@@ -78,12 +78,20 @@ function renderDestinations() {
 }
 function renderRecordings(force = false) {
   const records = appState?.recordings || [];
-  const visibleRecords = recordingFilter === 'all' ? records : records.filter(record => record.category === recordingFilter);
+  const search = normalizeRecordingSearch($('#recording-search').value);
+  const visibleRecords = records.filter(record => {
+    if (recordingFilter !== 'all' && record.category !== recordingFilter) return false;
+    if (!search) return true;
+    const category = recordingCategories[record.category] || '';
+    return normalizeRecordingSearch(`${record.title || ''} ${record.name || ''} ${category}`).includes(search);
+  });
   const total = appState?.recordingTotalCount ?? records.length;
-  $('#recording-count').textContent = `${total} ${total === 1 ? 'archivo' : 'archivos'}`;
+  $('#recording-count').textContent = search || recordingFilter !== 'all'
+    ? `${visibleRecords.length} de ${records.length} ${records.length === 1 ? 'archivo' : 'archivos'}`
+    : `${total} ${total === 1 ? 'archivo' : 'archivos'}`;
   $('#home-recording-count').textContent = `${total} ${total === 1 ? 'archivo' : 'archivos'}`;
   $('#home-recording-summary').textContent = `${total} ${total === 1 ? 'video' : 'videos'}`;
-  const signature = `${recordingFilter}|${records.map(record => `${record.url}:${record.createdAt}:${record.category || ''}:${record.thumbnailUrl || ''}:${record.subtitlesUrl || ''}`).join('|')}`;
+  const signature = `${recordingFilter}|${search}|${records.map(record => `${record.url}:${record.createdAt}:${record.category || ''}:${record.thumbnailUrl || ''}:${record.subtitlesUrl || ''}`).join('|')}`;
   const cards = visibleRecords.length ? visibleRecords.map(record => {
     const title = record.title || record.name;
     const subtitleLanguage = record.subtitleLanguage || 'es';
@@ -92,18 +100,21 @@ function renderRecordings(force = false) {
       ? `<track kind="captions" src="${escapeHtml(record.subtitlesUrl)}" srclang="${escapeHtml(subtitleLanguage)}" label="${escapeHtml(subtitleLanguage === 'es' ? 'Español' : subtitleLanguage)}" default />`
       : '';
     return `<article class="vod-card"><div class="vod-player"><video controls preload="metadata" playsinline aria-label="Reproducir ${escapeHtml(title)}"${record.thumbnailUrl ? ` poster="${escapeHtml(record.thumbnailUrl)}"` : ''}><source src="${escapeHtml(record.url)}" type="video/mp4">${track}Tu navegador no puede reproducir este video.</video></div><div class="vod-details"><div><b>${escapeHtml(title)}</b><small>${new Date(record.createdAt).toLocaleString()} · ${formatSize(record.size)}${record.subtitlesUrl ? ' · Subtítulos disponibles' : ''}</small><span class="vod-category">${escapeHtml(category)}</span></div><a class="download-recording" href="${escapeHtml(record.url)}" download>Descargar ↓</a></div></article>`;
-  }).join('') : `<div class="empty-recordings">${records.length ? 'No hay videos en esta categoría.' : 'Aún no hay videos disponibles en la biblioteca.'}</div>`;
-  for (const [selector, signatureKey] of [['#recording-list', 'vod'], ['#home-recording-list', 'home']]) {
-    const list = $(selector);
-    const oldSignature = signatureKey === 'vod' ? renderedRecordingSignature : renderedHomeRecordingSignature;
-    if (!force && signature === oldSignature) continue;
-    const playerInUse = [...list.querySelectorAll('video')].some(video => !video.ended && (video.currentTime > 0 || !video.paused));
-    if (!force && oldSignature !== null && playerInUse) continue;
-    list.innerHTML = cards;
-    if (signatureKey === 'vod') renderedRecordingSignature = signature;
-    else renderedHomeRecordingSignature = signature;
-  }
+  }).join('') : `<div class="empty-recordings">${records.length ? search ? `No hay videos que coincidan con “${escapeHtml($('#recording-search').value.trim())}”.` : 'No hay videos en esta categoría.' : 'Aún no hay videos disponibles en la biblioteca.'}</div>`;
+  const list = $('#recording-list');
+  if (!force && signature === renderedRecordingSignature) return;
+  const playerInUse = [...list.querySelectorAll('video')].some(video => !video.ended && (video.currentTime > 0 || !video.paused));
+  if (!force && renderedRecordingSignature !== null && playerInUse) return;
+  list.innerHTML = cards;
+  renderedRecordingSignature = signature;
 }
+function normalizeRecordingSearch(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+}
+$('#recording-search').addEventListener('input', () => {
+  clearTimeout(recordingSearchTimer);
+  recordingSearchTimer = setTimeout(() => renderRecordings(true), 180);
+});
 $('#recording-category-filters').addEventListener('click', async event => {
   const button = event.target.closest('[data-recording-category]');
   if (!button) return;
@@ -185,7 +196,7 @@ function formatDuration(seconds) { const total = Math.max(0, Math.floor(Number(s
 function renderSchedules() {
   const schedules = appState?.schedules || [];
   const labels = { programada: 'Programada', 'en curso': 'En curso', finalizada: 'Finalizada', fallida: 'Fallida' };
-  $('#schedule-list').innerHTML = schedules.length ? schedules.map(item => `<div class="schedule-row"><div class="schedule-date"><b>${new Date(item.startsAt).toLocaleDateString()}</b><small>${new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div><div class="schedule-meta"><b>${escapeHtml(item.title)}</b><small>${item.destinations.length ? escapeHtml(item.destinations.join(', ')) : 'Sin destinos configurados'}${item.durationMinutes ? ` · ${item.durationMinutes} min` : ''}${item.error ? ` · ${escapeHtml(item.error)}` : ''}</small></div><span class="tag ${item.status === 'programada' || item.status === 'en curso' ? 'ready' : 'neutral'}">${escapeHtml(labels[item.status] || item.status)}</span>${item.status === 'programada' ? `<button class="remove-destination" data-cancel-schedule="${escapeHtml(item.id)}" aria-label="Cancelar ${escapeHtml(item.title)}">×</button>` : ''}</div>`).join('') : '<div class="empty-event"><div class="calendar-art"><span>INETER</span><b>--</b><i>+</i></div><div><b>Aún no hay transmisiones programadas</b><p>Programa un horario para iniciar OBS automáticamente.</p></div></div>';
+  $('#schedule-list').innerHTML = schedules.length ? schedules.map(item => `<div class="schedule-row"><div class="schedule-date"><b>${new Date(item.startsAt).toLocaleDateString()}</b><small>${new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div><div class="schedule-meta"><b>${escapeHtml(item.title)}</b><small>${item.destinations.length ? escapeHtml(item.destinations.join(', ')) : 'Sin destinos configurados'}${item.durationMinutes ? ` · ${item.durationMinutes} min` : ''}${item.error ? ` · ${escapeHtml(item.error)}` : ''}</small></div><span class="tag ${item.status === 'programada' || item.status === 'en curso' ? 'ready' : 'neutral'}">${escapeHtml(labels[item.status] || item.status)}</span></div>`).join('') : '<div class="empty-event"><div class="calendar-art"><span>INETER</span><b>--</b><i>+</i></div><div><b>Aún no hay transmisiones programadas</b><p>Programa un horario para iniciar OBS automáticamente.</p></div></div>';
 }
 function renderState() {
   renderDestinations(); renderRecordings(); renderSchedules();
@@ -209,11 +220,10 @@ function renderState() {
         ? `No se pudo transmitir el video “${videoBroadcast.title}”: ${videoBroadcast.error}`
         : appState.live
     ? `Señal activa desde ${new Date(appState.liveSince).toLocaleTimeString()}. En Vivo procesa ${destinationCount} salida(s) y guarda la grabación local.`
-    : 'Conecta el estudio para iniciar la emisión principal y publicarla en los destinos configurados.';
+    : 'El equipo de INETER administra la señal y las plataformas de transmisión.';
   if (appState.lastError) $('#stream-note').textContent = appState.lastError;
   const obs = appState.obs || {};
   const isTransmitting = Boolean(appState.live || obs.streaming || videoBroadcastLive);
-  const videoBroadcastActive = ['programada', 'en vivo'].includes(videoBroadcast?.status);
   $('#home-live-chip').classList.toggle('is-live', isTransmitting);
   $('#home-live-status').textContent = isTransmitting ? 'Transmisión en vivo' : 'Esperando transmisión';
   $('#home-obs-label').textContent = obs.connected ? 'OBS conectado' : 'OBS sin conectar';
@@ -221,14 +231,8 @@ function renderState() {
   $('#home-destination-count').textContent = destinationCount;
   $('#home-stream-description').textContent = appState.live
     ? `Señal activa desde ${new Date(appState.liveSince).toLocaleTimeString()}; la grabación se está guardando.`
-    : obs.connected ? 'OBS está conectado y listo para iniciar la emisión.' : 'Conecta OBS para emitir y guardar tus transmisiones.';
+    : 'El equipo de INETER administra la señal de transmisión.';
   $('#obs-connection').textContent = obs.connected ? 'Estudio conectado' : 'Estudio sin conectar';
-  $('#obs-toggle').disabled = !obs.connected || (videoBroadcastActive && !obs.streaming);
-  const startLabel = destinationCount ? 'Iniciar todas las plataformas' : 'Iniciar transmisión';
-  const streamButtonLabel = obs.streaming ? 'Detener todas las salidas' : videoBroadcastActive ? 'Video en transmisión' : startLabel;
-  $('#obs-toggle').textContent = streamButtonLabel;
-  $('#go-live').disabled = videoBroadcastActive && !obs.streaming;
-  $('#go-live').innerHTML = `<span class="live-dot"></span>${escapeHtml(streamButtonLabel)}`;
   $('#studio-status').textContent = obs.connected ? 'OBS CONECTADO' : (obs.configured ? 'OBS DESCONECTADO' : 'OBS SIN CONECTAR');
   $('#studio-status').classList.toggle('ready', !!obs.connected);
   $('#system-status').textContent = appState.live ? 'En vivo' : (obs.connected ? 'OBS conectado' : 'Backend conectado');
@@ -467,49 +471,12 @@ $('#admin-access-request-form').addEventListener('submit', async event => {
 });
 function closeStreamYardModal() { $('#streamyard-modal').classList.remove('open'); $('#streamyard-modal').setAttribute('aria-hidden', 'true'); }
 function closeObsModal() { obsModal.classList.remove('open'); obsModal.setAttribute('aria-hidden','true'); }
-document.querySelectorAll('.studio-option').forEach(button => button.addEventListener('click', async () => {
-  try { appState = await api('/api/studio', { method: 'PUT', body: JSON.stringify({ studio: button.dataset.studio }) }); renderState(); }
-  catch (error) { toast(error.message); }
-}));
-$('#add-destination').addEventListener('click', openModal);
 $('#cancel-modal').addEventListener('click', closeModal);
 $('.modal-close').addEventListener('click', closeModal);
 modal.addEventListener('click', event => { if (event.target === modal) closeModal(); });
 $('#obs-close').addEventListener('click', closeObsModal);
 $('#obs-cancel').addEventListener('click', closeObsModal);
 obsModal.addEventListener('click', event => { if (event.target === obsModal) closeObsModal(); });
-$('#destination-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const body = { platform: $('#platform-select').value, name: $('#channel-name').value.trim(), serverUrl: $('#server-url').value.trim(), key: $('#stream-key').value.trim() };
-  try { appState = await api('/api/destinations', { method: 'POST', body: JSON.stringify(body) }); renderState(); closeModal(); toast('Destino conectado. La clave quedó cifrada en el servidor.'); }
-  catch (error) { toast(error.message); }
-});
-$('#schedule-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const body = { title: $('#schedule-name').value.trim(), startsAt: new Date($('#schedule-start').value).toISOString(), durationMinutes: $('#schedule-duration').value || null };
-  try { appState = await api('/api/schedules', { method: 'POST', body: JSON.stringify(body) }); renderState(); closeScheduleModal(); toast('Transmisión programada. OBS debe estar abierto y conectado a esa hora.'); }
-  catch (error) { toast(error.message); }
-});
-$('#platform-select').addEventListener('change', () => {
-  const isYouTube = $('#platform-select').value === 'YouTube';
-  $('#server-url').placeholder = isYouTube ? 'Copia la URL de YouTube Studio (RTMPS)' : 'rtmps://servidor/plataforma';
-  $('#destination-help').innerHTML = isYouTube
-    ? 'YouTube: copia la URL y la clave desde <a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Studio</a>. Activa Auto-start en el evento antes de la emisión; después podrás iniciar OBS desde esta página sin abrir YouTube Studio. Sin Auto-start, YouTube exige confirmar el inicio en Studio.'
-    : 'Usa la URL RTMP y la clave que te entrega esa plataforma.';
-});
-$('#obs-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const body = { host: $('#obs-host').value.trim(), port: Number($('#obs-port').value), password: $('#obs-password').value };
-  try {
-    appState = await api('/api/obs/connect', { method: 'POST', body: JSON.stringify(body) });
-    renderState(); closeObsModal(); toast('OBS conectado y configurado para enviar a En Vivo.');
-  } catch (error) { toast(error.message); $('#obs-connection').textContent = error.message; }
-});
-$('#platform-list').addEventListener('click', async event => {
-  const button = event.target.closest('[data-remove]'); if (!button) return;
-  try { appState = await api(`/api/destinations/${encodeURIComponent(button.dataset.remove)}`, { method: 'DELETE' }); renderState(); toast('Destino eliminado.'); }
-  catch (error) { toast(error.message); }
-});
 document.querySelector('.dismiss')?.addEventListener('click', () => { $('#notice').style.display = 'none'; });
 document.querySelectorAll('[data-dismiss-tip]').forEach(button => {
   const tip = document.getElementById(button.dataset.dismissTip);
@@ -590,6 +557,7 @@ document.addEventListener('firebase-auth-session-cleared', () => {
 });
 const viewTitles = { inicio: 'Inicio', streaming: 'Streaming', videos: 'Videos bajo demanda', agricultura: 'Asesoría agrícola', pronostico: 'Pronóstico climático', mapa: 'Mapa climático', alertas: 'Alertas', datos: 'Datos climáticos' };
 function showView(name, updateLocation = true, scrollTop = true) {
+  setMobileMenuOpen(false);
   const views = [...document.querySelectorAll('[data-view]')];
   if (!views.some(view => view.dataset.view.split(/\s+/).includes(name))) name = 'inicio';
   currentView = name;
@@ -647,24 +615,6 @@ window.addEventListener('resize', () => {
 });
 window.addEventListener('popstate', restoreViewFromLocation);
 window.addEventListener('hashchange', restoreViewFromLocation);
-$('#connect-studio').addEventListener('click', () => appState?.studio === 'StreamYard' ? openStreamYardModal() : openObsModal());
-$('#obs-connect-inline').addEventListener('click', openObsModal);
-async function toggleObsStream() {
-  if (!appState?.obs?.connected) { openObsModal(); return; }
-  const action = appState.obs.streaming ? 'stop' : 'start';
-  try {
-    appState = await api('/api/obs/stream', { method: 'POST', body: JSON.stringify({ action }) }); renderState();
-    if (action === 'start') {
-      const count = appState.destinations.length;
-      if (appState.lastError) toast(appState.lastError);
-      else if (!appState.live) toast(count ? 'OBS está transmitiendo; las plataformas se conectarán en cuanto reciban la señal.' : 'OBS inició; añade destinos para enviarlo a otras plataformas.');
-      else toast(count ? 'Señal recibida; iniciando todas las plataformas configuradas.' : 'La transmisión está en vivo y se está guardando.');
-    } else toast('Deteniendo OBS y todas las salidas configuradas.');
-  }
-  catch (error) { toast(error.message); }
-}
-$('#obs-toggle').addEventListener('click', toggleObsStream);
-$('#go-live').addEventListener('click', toggleObsStream);
 const monitorHistory = [];
 let monitorRequestBusy = false;
 async function refreshAdminMonitor() {
@@ -732,7 +682,6 @@ async function refreshAdminMonitor() {
     $('#monitor-error').textContent = error.message.includes('403') ? 'Acceso denegado: inicia sesión con una cuenta de soporte o administración.' : `No se pudo actualizar: ${error.message}`;
   } finally { monitorRequestBusy = false; }
 }
-$('#schedule').addEventListener('click', openScheduleModal);
 $('#schedule-close').addEventListener('click', closeScheduleModal);
 $('#schedule-cancel').addEventListener('click', closeScheduleModal);
 $('#streamyard-close').addEventListener('click', closeStreamYardModal);
@@ -845,11 +794,6 @@ document.querySelector('.live-reaction-menu')?.addEventListener('click', async e
     button.disabled = false;
   }
 });
-$('#schedule-list').addEventListener('click', async event => {
-  const button = event.target.closest('[data-cancel-schedule]'); if (!button) return;
-  try { appState = await api(`/api/schedules/${encodeURIComponent(button.dataset.cancelSchedule)}`, { method: 'DELETE' }); renderState(); toast('Transmisión programada cancelada.'); }
-  catch (error) { toast(error.message); }
-});
 restoreViewFromLocation(); refreshAuth().then(() => {
   if (location.hash === '#monitoreo' && ['admin','monitor_admin'].includes(authState.professional?.role)) showView('monitoreo', false, false);
 });
@@ -865,7 +809,7 @@ const botLauncher = document.querySelector('#info-bot-launcher');
 const botMessages = document.querySelector('#info-bot-messages');
 const botInput = document.querySelector('#info-bot-input');
 const botAnswers = [
-  { keys: ['stream', 'obs', 'transmit', 'emitir', 'salida', 'youtube', 'twitch'], view: 'streaming', answer: 'En Streaming puedes conectar el estudio y controlar la emisión principal. Durante una transmisión, el reproductor muestra espectadores y permite enviar reacciones.' },
+  { keys: ['stream', 'obs', 'transmit', 'emitir', 'salida', 'youtube', 'twitch'], view: 'streaming', answer: 'En Streaming puedes consultar la señal y ver la transmisión en vivo. El inicio y control de la emisión están reservados al equipo administrador.' },
   { keys: ['video', 'grabacion', 'biblioteca', 'reproduc', 'descargar'], view: 'videos', answer: 'Videos bajo demanda reúne las grabaciones guardadas cuando finaliza una transmisión. Desde esa sección puedes reproducirlas y descargarlas.' },
   { keys: ['agric', 'sembr', 'cultivo', 'siembra', 'parcela'], view: 'agricultura', answer: 'Asesoría agrícola ofrece una orientación preliminar basada en la humedad observada y el pronóstico que consultes. Confirma las recomendaciones con los boletines de INETER y el personal técnico agrícola.' },
   { keys: ['pronost', 'clima', 'tiempo', 'lluvia', 'temperatura'], view: 'pronostico', answer: 'Pronóstico climático muestra la información meteorológica disponible por zona. La portada incluye un resumen de condiciones y cinco días; verifica siempre los avisos oficiales vigentes.' },

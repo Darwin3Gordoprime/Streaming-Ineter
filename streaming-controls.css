@@ -23,83 +23,6 @@
   color: #001f3f;
 }
 
-.obs-production-panel {
-  margin-top: 14px;
-  padding: 18px;
-}
-
-.obs-production-panel .panel-heading {
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.obs-production-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.obs-production-controls {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  padding: 15px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #f8fbff;
-}
-
-.obs-production-controls .field-label {
-  margin: 2px 0 0;
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.obs-production-controls select {
-  width: 100%;
-  min-width: 0;
-  min-height: 39px;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--ink);
-}
-
-.obs-production-controls .button {
-  justify-self: start;
-  margin-top: 5px;
-}
-
-.obs-production-controls .button:disabled {
-  cursor: not-allowed;
-  opacity: .55;
-}
-
-.obs-production-controls small,
-.obs-production-note {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.obs-scene-switcher {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.obs-scene-switcher .button {
-  flex: none;
-  margin: 0;
-}
-
-.obs-production-note {
-  margin: 13px 2px 0;
-}
-
 .live-player-panel {
   margin-top: 14px;
   padding: 18px;
@@ -144,29 +67,133 @@
 .live-player-panel #live-player-badge { display: none; }
 .live-player-panel #live-player-badge.ready { display: inline-flex; }
 
+.live-reaction-bursts {
+  position: absolute;
+  inset: auto 14px 14px auto;
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.live-reaction-burst {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ffffffeb;
+  font-size: 24px;
+  animation: live-reaction-rise 3s ease-out forwards;
+}
+
+@keyframes live-reaction-rise {
+  0% { opacity: 0; transform: translateY(18px) scale(.8); }
+  15% { opacity: 1; transform: translateY(0) scale(1); }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-38px) scale(1.08); }
+}
+
+.live-interaction-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-top: 14px;
+}
+
+.live-interaction-bar[hidden] {
+  display: none !important;
+}
+
+.live-viewer-count,
+.live-like-count {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-viewer-count b,
+.live-like-count b {
+  color: var(--ink);
+}
+
+.live-reaction-menu {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.live-reaction-menu span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.live-reaction-menu button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 19px;
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease;
+}
+
+.live-reaction-menu button:hover {
+  transform: translateY(-2px);
+  background: #eef7ff;
+}
+
+.recording-category-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.recording-category-filters button {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recording-category-filters button.active,
+.recording-category-filters button[aria-pressed="true"] {
+  border-color: #176f79;
+  background: #e8f5f4;
+  color: #176f79;
+}
+
+.vod-category {
+  display: inline-block;
+  margin-top: 5px;
+  color: #176f79;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 @media (max-width: 700px) {
-  .obs-production-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .obs-production-panel .panel-heading {
-    flex-direction: column;
-  }
-
-  .obs-scene-switcher {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .obs-scene-switcher .button {
-    width: 100%;
-  }
-
   .live-player-panel .panel-heading {
     flex-direction: column;
   }
 
   .live-player-frame {
     min-height: 180px;
+  }
+
+  .live-interaction-bar {
+    align-items: flex-start;
+  }
+
+  .live-reaction-menu {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .live-reaction-menu span {
+    margin-right: auto;
   }
 }

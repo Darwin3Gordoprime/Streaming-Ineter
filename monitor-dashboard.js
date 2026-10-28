@@ -226,7 +226,6 @@ async function refreshMonitorData() {
       setMonitorProgress('monitor-task-disk-bar', 0);
     }
     monitor$('monitor-interfaces').textContent = m.network.available ? `${m.network.interfaces.join(', ')} · ${m.network.source}` : (m.network.error || 'No disponible');
-    monitor$('monitor-destinations').innerHTML = `<div class="monitor-destination-row"><b>OBS Studio</b><span class="tag ${m.obs.connected ? 'ready' : 'neutral'}">${m.obs.connected ? m.obs.streaming ? 'TRANSMITIENDO' : 'CONECTADO' : 'DESCONECTADO'}</span></div>${m.destinations.length ? m.destinations.map(d => `<div class="monitor-destination-row"><b>${escapeMonitor(d.name)} · ${escapeMonitor(d.platform)}</b><span class="tag ${d.status === 'enviando' ? 'ready' : d.status === 'error' ? 'warning' : 'neutral'}">${escapeMonitor(d.status)}</span></div>`).join('') : '<p class="empty-recordings">No hay plataformas configuradas.</p>'}`;
     monitor$('monitor-active-users').textContent = String(m.activeUsers.length);
     monitor$('monitor-active-users-updated').textContent = `Actividad en últimos 90 s · ${new Date(m.sampledAt).toLocaleTimeString('es-NI')}`;
     monitor$('monitor-active-user-list').innerHTML = m.activeUsers.length ? m.activeUsers.map(u => `<div class="monitor-destination-row"><b>${escapeMonitor(u.name)}<small>${escapeMonitor(u.email)} · ${escapeMonitor(u.role)}</small></b><span class="tag ready">${escapeMonitor(u.view)}</span></div>`).join('') : '<p class="empty-recordings">No hay otras sesiones activas.</p>';
@@ -242,7 +241,7 @@ async function refreshMonitorData() {
     monitor$('monitor-server-heap').textContent = `${formatMonitorSize(m.server.heapUsedBytes)} usados de ${formatMonitorSize(m.server.heapTotalBytes)}`;
     monitor$('monitor-server-sampled').textContent = new Date(m.sampledAt).toLocaleString('es-NI');
     monitor$('monitor-updated').textContent = `Última lectura: ${new Date(m.sampledAt).toLocaleTimeString('es-NI')}`;
-    monitor$('monitor-error').textContent = m.latestError || (m.obs.error ? `OBS: ${m.obs.error}` : '');
+    monitor$('monitor-error').textContent = m.latestError || '';
     monitorHistory.push({ upload: m.network.uploadMbps, download: m.network.downloadMbps });
     if (monitorHistory.length > 30) monitorHistory.shift();
     const max = Math.max(.1, ...monitorHistory.flatMap(p => [p.upload, p.download]));

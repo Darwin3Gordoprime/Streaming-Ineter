@@ -50,6 +50,7 @@ function requestUsesHttps(req) {
 let state = readState();
 if (!Array.isArray(state.sessions)) state.sessions = [];
 if (!Array.isArray(state.schedules)) state.schedules = [];
+if (!Array.isArray(state.destinations)) state.destinations = [];
 if (!Array.isArray(state.videos)) state.videos = [];
 if (!Array.isArray(state.professionals)) state.professionals = [];
 if (!Array.isArray(state.adminAccessRequests)) state.adminAccessRequests = [];
@@ -59,6 +60,7 @@ if (!Array.isArray(state.pushTokens)) state.pushTokens = [];
 if (!state.likes || typeof state.likes !== 'object') state.likes = {};
 if (!Array.isArray(state.likesLog)) state.likesLog = [];
 if (!state.authSessions || typeof state.authSessions !== 'object') state.authSessions = {};
+if (!state.youtubeConfigs || typeof state.youtubeConfigs !== 'object' || Array.isArray(state.youtubeConfigs)) state.youtubeConfigs = {};
 const studioSoftwareIds = ['obs', 'streamyard', 'streamlabs', 'prism'];
 const studioProfileDefaults = Object.fromEntries(studioSoftwareIds.map(id => [id, {
   source: 'camera',
@@ -896,6 +898,19 @@ function listRecordingsByCategory(category = 'all') {
   const recordings = listRecordings();
   return category === 'all' ? recordings : recordings.filter(recording => recording.category === category);
 }
+function publicYoutubeConfig(admin) {
+  const ownerId = String(admin.firebaseUid || admin.id);
+  const config = state.youtubeConfigs[ownerId];
+  const destination = config && state.destinations.find(item => item.id === config.destinationId);
+  return {
+    configured: !!destination,
+    accountName: config?.accountName || '',
+    accountEmail: config?.accountEmail || '',
+    serverUrl: destination?.serverUrl || config?.serverUrl || '',
+    keyConfigured: !!destination?.secret,
+    updatedAt: config?.updatedAt || null
+  };
+}
 function publicVideoBroadcast() {
   if (!videoBroadcast) return null;
   const { id, videoId, title, status, startAt, startedAt, endedAt, error, delaySeconds } = videoBroadcast;
@@ -1242,6 +1257,12 @@ const adminServer = http.createServer((req, res) => {
     json(res, 500, { error: 'Error interno del servidor.' });
   });
 });
+for (const listener of [server, adminServer]) {
+  listener.requestTimeout = 600_000;
+  listener.headersTimeout = 600_000;
+  listener.keepAliveTimeout = 600_000;
+  listener.timeout = 600_000;
+}
 async function handleHttpRequest(req, res) {
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
@@ -1415,8 +1436,13 @@ async function handleHttpRequest(req, res) {
     ]);
     const isMonitorSnapshot = req.method === 'GET' && url.pathname === '/api/admin/monitor';
     const isMonitorAdminCreation = req.method === 'POST' && url.pathname === '/api/admin/monitor-admins';
-    const isAdminStreamManagement = (req.method === 'POST' && ['/api/obs/connect', '/api/obs/stream', '/api/destinations'].includes(url.pathname))
-      || (req.method === 'DELETE' && /^\/api\/destinations\/[\w-]+$/.test(url.pathname));
+    const isAdminStreamManagement = (req.method === 'POST' && ['/api/obs/connect', '/api/obs/stream', '/api/obs/scene', '/api/destinations', '/api/schedules'].includes(url.pathname))
+      || (req.method === 'PUT' && ['/api/studio', '/api/obs/video-settings'].includes(url.pathname))
+      || (req.method === 'DELETE' && (/^\/api\/destinations\/[\w-]+$/.test(url.pathname) || /^\/api\/schedules\/[\w-]+$/.test(url.pathname)));
+    const isAdminStreamInspection = req.method === 'GET' && ['/api/obs/production', '/api/obs/preview'].includes(url.pathname);
+    if ((isAdminStreamManagement || isAdminStreamInspection) && currentAdminProfessional(req)?.role !== 'admin') {
+      return json(res, 403, { error: 'Se requiere una cuenta administradora para controlar la transmisión.' });
+    }
     if (!publicAuthRoutes.has(url.pathname) && !currentProfessional(req) && !(url.pathname.startsWith('/api/admin/') && currentMonitorProfessional(req)) && !((isMonitorSnapshot || isMonitorAdminCreation) && currentMonitorProfessional(req)) && !(isAdminStreamManagement && currentAdminProfessional(req))) {
       return json(res, 401, { error: 'Inicia sesión con Firebase para acceder al contenido de INETER.' });
     }
@@ -1737,6 +1763,71 @@ async function handleHttpRequest(req, res) {
       const category = url.searchParams.get('category') || 'all';
       if (category !== 'all' && !Object.hasOwn(videoCategoryLabels, category)) return json(res, 400, { error: 'La categoría de video no es válida.' });
       return json(res, 200, { videos: listRecordingsByCategory(category), broadcast: publicVideoBroadcast() });
+    }
+    if (url.pathname === '/api/admin/youtube-config' && req.method === 'GET') {
+      const admin = currentAdminProfessional(req);
+      if (admin?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      return json(res, 200, { config: publicYoutubeConfig(admin) });
+    }
+    if (url.pathname === '/api/admin/youtube-config' && req.method === 'PUT') {
+      const admin = currentAdminProfessional(req);
+      if (admin?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const body = await readBody(req).catch(() => null);
+      const accountName = String(body?.accountName || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+      const accountEmail = String(body?.accountEmail || '').trim().toLowerCase();
+      const serverUrl = String(body?.serverUrl || '').trim();
+      const key = String(body?.key || '').trim();
+      if (!accountName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail) || accountEmail.length > 254 || !validRtmp(serverUrl)) {
+        return json(res, 400, { error: 'Indica el nombre del canal, el correo de la cuenta y una URL RTMP/RTMPS válida.' });
+      }
+      const ownerId = String(admin.firebaseUid || admin.id);
+      const config = state.youtubeConfigs[ownerId];
+      let destination = config && state.destinations.find(item => item.id === config.destinationId);
+      if ((!destination || config.accountEmail !== accountEmail) && !key) return json(res, 400, { error: 'Ingresa la clave de transmisión de YouTube Studio para vincular esta cuenta.' });
+      if (!destination) {
+        destination = { id: crypto.randomUUID(), platform: 'YouTube', name: accountName, serverUrl, secret: encrypt(key) };
+        state.destinations.push(destination);
+      } else {
+        destination.platform = 'YouTube';
+        destination.name = accountName;
+        destination.serverUrl = serverUrl;
+        if (key) destination.secret = encrypt(key);
+      }
+      state.youtubeConfigs[ownerId] = {
+        ownerId,
+        destinationId: destination.id,
+        accountName,
+        accountEmail,
+        serverUrl,
+        updatedAt: new Date().toISOString()
+      };
+      saveState();
+      return json(res, 200, { config: publicYoutubeConfig(admin) });
+    }
+    const vodDeleteMatch = url.pathname.match(/^\/api\/admin\/vod\/([a-f0-9-]{32,36})$/i);
+    if (req.method === 'DELETE' && vodDeleteMatch) {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const recording = listRecordings().find(item => item.id === vodDeleteMatch[1]);
+      if (!recording) return json(res, 404, { error: 'Video no encontrado en la biblioteca.' });
+      if (videoBroadcastIsActive() && videoBroadcast.videoId === recording.id) return json(res, 409, { error: 'Detén la transmisión de este video antes de eliminarlo.' });
+      const video = state.videos.find(item => item.id === recording.id || item.filename === recording.name);
+      const videoPath = path.resolve(recordingsDir, recording.name);
+      const assetDirectory = path.resolve(recordingsDir, 'biblioteca');
+      if (!videoPath.startsWith(`${recordingsDir}${path.sep}`)) return json(res, 400, { error: 'La ruta del video no es válida.' });
+      try {
+        fs.rmSync(videoPath, { force: true });
+        for (const filename of [video?.thumbnailFilename, video?.subtitleFilename]) {
+          if (!filename || path.basename(filename) !== filename) continue;
+          const assetPath = path.resolve(assetDirectory, filename);
+          if (assetPath.startsWith(`${assetDirectory}${path.sep}`)) fs.rmSync(assetPath, { force: true });
+        }
+        state.videos = state.videos.filter(item => item.id !== recording.id && item.filename !== recording.name);
+        saveState();
+      } catch (error) {
+        console.error('No se pudo eliminar el video de la biblioteca:', error);
+        return json(res, 500, { error: 'No se pudo eliminar el archivo de video y sus datos.' });
+      }
+      return json(res, 200, { deleted: true, id: recording.id });
     }
     const videoCategoryMatch = url.pathname.match(/^\/api\/admin\/videos\/([\w-]+)\/category$/);
     if (req.method === 'PUT' && videoCategoryMatch) {

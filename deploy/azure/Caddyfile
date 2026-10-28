@@ -1,3 +1,14 @@
+{
+    servers {
+        timeouts {
+            read_body 10m
+            read_body_idle 10m
+            write 10m
+            write_idle 10m
+        }
+    }
+}
+
 {$APP_DOMAIN} {
     encode zstd gzip
     reverse_proxy app:3000

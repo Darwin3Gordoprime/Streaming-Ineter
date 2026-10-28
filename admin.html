@@ -71,15 +71,27 @@
             <div class="card-heading"><div><span class="eyebrow">SALIDAS RTMP</span><h3>Plataformas configuradas</h3><p>Credenciales cifradas y disponibles para asignar a cada perfil.</p></div><span class="pill" id="admin-stream-destination-count">0 destinos</span></div>
             <div id="admin-stream-destination-list" class="admin-stream-destination-list">Cargando plataformas…</div>
             <form id="admin-stream-destination-form" class="admin-stream-form">
-              <label>Plataforma<select name="platform" required><option value="YouTube">YouTube Live</option><option>Twitch</option><option>Facebook</option><option>TikTok</option><option>Personalizado</option></select></label>
+              <label>Plataforma<select name="platform" required><option>Twitch</option><option>Facebook</option><option>TikTok</option><option>Personalizado</option></select></label>
               <label>Nombre del canal<input name="name" maxlength="40" placeholder="Ej. Canal INETER" required /></label>
               <label class="wide">URL del servidor RTMP<input name="serverUrl" type="url" placeholder="rtmps://servidor/plataforma" required /></label>
               <label class="wide">Clave de transmisión<input name="key" type="password" autocomplete="new-password" required /></label>
-              <p class="form-message wide" id="admin-stream-youtube-help">Para YouTube, activa Auto-start en el evento de YouTube Studio antes de transmitir. La clave se cifra y no se muestra después de guardarla.</p>
+              <p class="form-message wide" id="admin-stream-youtube-help">La clave de transmisión se cifra y no se muestra después de guardarla.</p>
               <button class="button secondary wide" id="admin-stream-add-destination" type="submit">Guardar plataforma</button>
             </form>
           </article>
         </div>
+        <article class="card admin-youtube-card">
+          <div class="card-heading"><div><span class="eyebrow">YOUTUBE STUDIO</span><h3>Cuenta y destino de transmisión</h3><p>La configuración queda vinculada a la cuenta administradora con sesión activa.</p></div><span class="pill" id="admin-youtube-status">Consultando…</span></div>
+          <form id="admin-youtube-form" class="admin-stream-form">
+            <label>Nombre del canal<input name="accountName" maxlength="80" autocomplete="organization" required placeholder="Ej. INETER Nicaragua" /></label>
+            <label>Correo de la cuenta activa<input name="accountEmail" type="email" maxlength="254" autocomplete="email" required placeholder="canal@ejemplo.com" /></label>
+            <label class="wide">URL de emisión RTMP/RTMPS<input name="serverUrl" type="url" required placeholder="rtmps://servidor/stream" /></label>
+            <label class="wide">Clave de transmisión<input name="key" type="password" autocomplete="new-password" placeholder="Vacío para mantener la clave guardada" /></label>
+            <p class="form-message wide">Ingresa la clave de transmisión de YouTube Studio, no la contraseña de Google. La clave se cifra en el servidor y nunca se muestra al consultar la configuración. Usa el enlace para abrir YouTube Studio y copiar la URL/clave del evento activo.</p>
+            <div class="admin-stream-actions wide"><button class="button primary" id="admin-youtube-save" type="submit">Guardar configuración de YouTube</button><a class="button secondary" href="https://studio.youtube.com/" target="_blank" rel="noopener">Abrir YouTube Studio ↗</a></div>
+            <p class="form-message wide" id="admin-youtube-feedback" role="status"></p>
+          </form>
+        </article>
         <section class="card studio-suite" aria-label="Perfiles de software de emisión">
           <div class="card-heading"><div><span class="eyebrow">PERFILES DE EMISIÓN</span><h3>Configuración por software</h3><p>Guarda cada perfil de forma independiente. La señal entra por Azure MediaMTX y se retransmite a los destinos seleccionados.</p></div><span class="pill" id="active-studio-profile">OBS Studio activo</span></div>
           <div class="studio-software-tabs" role="tablist" aria-label="Software de emisión">

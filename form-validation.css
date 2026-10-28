@@ -1,0 +1,11 @@
+.field-validation-message {
+  display: block;
+  margin: 5px 0 0;
+  color: #b53028;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+[aria-invalid="true"] {
+  border-color: #b53028 !important;
+}
