@@ -264,6 +264,42 @@ async function refresh() {
 let livePlayerHls = null;
 let livePlayerSource = '';
 let livePlayerBusy = false;
+let liveStreamChannel = 'main';
+const liveChannelLabels = { main: 'Cámara principal', radar: 'Radar / gráficos', cam2: 'Cámara secundaria' };
+function renderLiveAngleControls(channels = {}) {
+  document.querySelectorAll('[data-stream-channel]').forEach(button => {
+    const active = button.dataset.streamChannel === liveStreamChannel;
+    const available = Boolean(channels[button.dataset.streamChannel]);
+    button.disabled = !available;
+    button.title = available
+      ? `Cambiar a ${liveChannelLabels[button.dataset.streamChannel]}`
+      : `${liveChannelLabels[button.dataset.streamChannel]}: esperando una fuente RTMP.`;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  $('#live-angle-status').textContent = liveChannelLabels[liveStreamChannel];
+}
+function switchStream(channel) {
+  if (!Object.hasOwn(liveChannelLabels, channel)) return;
+  const button = document.querySelector(`[data-stream-channel="${channel}"]`);
+  if (!button || button.disabled || liveStreamChannel === channel) return;
+  liveStreamChannel = channel;
+  renderLiveAngleControls({ ...liveAngleAvailability, [channel]: true });
+  $('#live-player-status').textContent = `${liveChannelLabels[channel]} · conectando con la señal…`;
+  livePlayerSource = '';
+  livePlayerHls?.destroy();
+  livePlayerHls = null;
+  const video = $('#live-player');
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  refreshLivePlayer();
+}
+let liveAngleAvailability = { main: false, radar: false, cam2: false };
+$('#live-angle-switcher').addEventListener('click', event => {
+  const button = event.target.closest('[data-stream-channel]');
+  if (button) switchStream(button.dataset.streamChannel);
+});
 async function refreshLivePlayer() {
   if (livePlayerBusy || document.hidden) return;
   livePlayerBusy = true;
@@ -277,6 +313,9 @@ async function refreshLivePlayer() {
     const liveState = await api('/api/live/status');
     if (!liveState.live || !liveState.playlistUrl) {
       shareButton.hidden = true;
+      liveAngleAvailability = { main: false, radar: false, cam2: false };
+      liveStreamChannel = 'main';
+      renderLiveAngleControls(liveAngleAvailability);
       livePlayerHls?.destroy();
       livePlayerHls = null;
       livePlayerSource = '';
@@ -291,16 +330,20 @@ async function refreshLivePlayer() {
       panel.hidden = true;
       return;
     }
+    liveAngleAvailability = liveState.channels || { main: true, radar: false, cam2: false };
+    if (!liveAngleAvailability[liveStreamChannel]) liveStreamChannel = 'main';
+    renderLiveAngleControls(liveAngleAvailability);
     panel.hidden = false;
     shareButton.hidden = false;
-    status.textContent = `Señal en vivo desde ${new Date(liveState.liveSince).toLocaleTimeString()}.`;
+    status.textContent = `${liveChannelLabels[liveStreamChannel]} · señal en vivo desde ${new Date(liveState.liveSince).toLocaleTimeString()}.`;
     badge.classList.add('ready');
     video.hidden = false;
     placeholder.hidden = true;
-    if (livePlayerSource === liveState.playlistUrl) return;
+    const playlistUrl = `/live/${liveStreamChannel}/index.m3u8`;
+    if (livePlayerSource === playlistUrl) return;
     livePlayerHls?.destroy();
     livePlayerHls = null;
-    livePlayerSource = liveState.playlistUrl;
+    livePlayerSource = playlistUrl;
     if (window.Hls?.isSupported()) {
       livePlayerHls = new window.Hls({
         lowLatencyMode: true,

@@ -55,6 +55,64 @@
   object-fit: contain;
 }
 
+.live-angle-switcher {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 0 2px;
+}
+
+.live-angle-switcher-label {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.live-angle-button {
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.live-angle-button:hover:not(:disabled) {
+  border-color: #176f79;
+  background: #f0f8f8;
+}
+
+.live-angle-button.active,
+.live-angle-button[aria-pressed="true"] {
+  border-color: #176f79;
+  background: #176f79;
+  color: #fff;
+}
+
+.live-angle-button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+.live-angle-button:focus-visible {
+  outline: 3px solid #78c5c6;
+  outline-offset: 2px;
+}
+
+.live-angle-status {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .live-player-placeholder {
   max-width: 440px;
   padding: 24px;
@@ -186,6 +244,25 @@
 
   .live-interaction-bar {
     align-items: flex-start;
+  }
+
+  .live-angle-switcher {
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .live-angle-switcher-label {
+    flex-basis: 100%;
+  }
+
+  .live-angle-button {
+    flex: 1 1 calc(50% - 8px);
+    padding-inline: 10px;
+  }
+
+  .live-angle-status {
+    flex-basis: 100%;
+    margin-left: 0;
   }
 
   .live-reaction-menu {

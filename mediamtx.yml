@@ -25,6 +25,12 @@ recordPartDuration: 1s
 recordSegmentDuration: 3h30m
 recordDeleteAfter: 0s
 paths:
+  live/main:
+    source: publisher
+  live/radar:
+    source: publisher
+  live/cam2:
+    source: publisher
   all_others:
     source: publisher
 hlsVariant: lowLatency

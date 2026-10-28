@@ -93,6 +93,13 @@
       <article class="panel live-player-panel" data-view="inicio streaming" aria-labelledby="live-player-title" hidden>
         <div class="panel-heading"><div><h2 id="live-player-title">Transmisión para usuarios</h2><p id="live-player-status" role="status">Consultando si hay una señal en vivo…</p></div><div class="stream-panel-actions"><button class="button secondary" id="share-live-btn" type="button" hidden>Compartir en vivo</button><span class="tag neutral" id="live-player-badge">EN VIVO</span></div></div>
         <div class="live-player-frame"><video id="live-player" controls playsinline muted autoplay hidden aria-label="Transmisión en vivo de INETER"></video><div class="live-player-placeholder" id="live-player-placeholder">La transmisión aparecerá aquí cuando el equipo inicie la señal.</div><div class="live-reaction-bursts" id="live-reaction-bursts" aria-live="polite" aria-label="Reacciones recientes"></div></div>
+        <div class="live-angle-switcher" id="live-angle-switcher" role="group" aria-label="Ángulos de transmisión en vivo">
+          <span class="live-angle-switcher-label">Ángulo de cámara</span>
+          <button type="button" class="live-angle-button active" data-stream-channel="main" aria-pressed="true">Cámara principal</button>
+          <button type="button" class="live-angle-button" data-stream-channel="radar" aria-pressed="false" disabled>Radar / gráficos</button>
+          <button type="button" class="live-angle-button" data-stream-channel="cam2" aria-pressed="false" disabled>Cámara secundaria</button>
+          <span class="live-angle-status" id="live-angle-status" role="status">Cámara principal</span>
+        </div>
         <div class="live-interaction-bar" id="live-stats-row" hidden>
           <span class="live-viewer-count"><b id="live-viewers-count">0</b> espectadores</span>
           <span class="live-like-count"><b id="live-likes-count">0</b> me gusta</span>

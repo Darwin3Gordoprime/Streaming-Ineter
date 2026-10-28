@@ -155,6 +155,8 @@ let ffmpegJobs = [];
 let activeSession = null;
 let liveSince = null;
 let livePublisherReady = false;
+let liveIngestPath = `live/${ingestToken}`;
+let liveAngleReady = { main: false, radar: false, cam2: false };
 let liveDisconnectTimer = null;
 let liveLimitStartedAt = null;
 let liveLimitTimer = null;
@@ -960,7 +962,7 @@ async function stopLiveAtMaximumDuration() {
     if (!connectionsResponse.ok) throw new Error(`MediaMTX API ${connectionsResponse.status}`);
     const connections = await connectionsResponse.json();
     for (const connection of connections.items || []) {
-      if (connection.path !== `live/${ingestToken}`) continue;
+      if (connection.path !== liveIngestPath) continue;
       const kickResponse = await fetch(`${baseUrl}/v3/rtmp/conns/kick/${encodeURIComponent(connection.id)}`, { method: 'POST', headers });
       if (!kickResponse.ok && kickResponse.status !== 404) throw new Error(`MediaMTX API ${kickResponse.status}`);
     }
@@ -1097,7 +1099,7 @@ function startRelay() {
     peakStreamViewers = 0;
     state.sessions.push(activeSession); saveState();
   }
-  const source = `${process.env.MEDIAMTX_RTSP_BASE || 'rtsp://127.0.0.1:8554'}/live/${ingestToken}`;
+  const source = `${process.env.MEDIAMTX_RTSP_BASE || 'rtsp://127.0.0.1:8554'}/${liveIngestPath}`;
   const base = ['-hide_banner', '-loglevel', 'warning', '-rtsp_transport', 'tcp', '-i', source];
   const destinations = activeStreamDestinations();
   const destinationIds = new Set(destinations.map(destination => destination.id));
@@ -1170,9 +1172,18 @@ async function scanStream() {
     const response = await fetch(`${baseUrl}/v3/paths/list`, { headers });
     if (!response.ok) throw new Error(`MediaMTX API ${response.status}`);
     const result = await response.json();
-    const item = (result.items || []).find(pathItem => pathItem.name === `live/${ingestToken}` && pathItem.ready);
-    livePublisherReady = !!item;
-    if (item) {
+    const readyPaths = new Set((result.items || []).filter(pathItem => pathItem.ready).map(pathItem => pathItem.name));
+    const tokenPath = `live/${ingestToken}`;
+    const nextIngestPath = readyPaths.has(tokenPath) ? tokenPath : readyPaths.has('live/main') ? 'live/main' : '';
+    liveAngleReady = {
+      main: Boolean(nextIngestPath),
+      radar: readyPaths.has('live/radar'),
+      cam2: readyPaths.has('live/cam2')
+    };
+    livePublisherReady = Boolean(nextIngestPath);
+    if (nextIngestPath) {
+      const sourceChanged = nextIngestPath !== liveIngestPath;
+      liveIngestPath = nextIngestPath;
       clearTimeout(liveDisconnectTimer);
       liveDisconnectTimer = null;
       if (!live) {
@@ -1182,6 +1193,7 @@ async function scanStream() {
         lastError = interruptedVideo ? 'Se detuvo el video para dar paso a la señal entrante de OBS.' : '';
         startLiveDurationLimit();
       }
+      if (sourceChanged && activeSession) stopRelay();
       startRelay();
     } else if (live && !liveDisconnectTimer) {
       liveDisconnectTimer = setTimeout(() => {
@@ -1272,7 +1284,8 @@ async function handleHttpRequest(req, res) {
     return json(res, 200, {
       live,
       liveSince,
-      playlistUrl: live ? '/live/playback/index.m3u8' : null
+      playlistUrl: live ? '/live/main/index.m3u8' : null,
+      channels: liveAngleReady
     });
   }
   if (req.method === 'GET' && url.pathname === '/api/stream/events') return addStreamEventClient(res);
@@ -1294,9 +1307,11 @@ async function handleHttpRequest(req, res) {
       return json(res, 500, { error: 'No se pudo generar el código QR de la transmisión.' });
     }
   }
+  const liveAngleMatch = url.pathname.match(/^\/live\/(main|radar|cam2)\/(.+)$/);
   const livePlaybackPrefix = '/live/playback/';
-  if (req.method === 'GET' && url.pathname.startsWith(livePlaybackPrefix)) {
-    const relativePath = url.pathname.slice(livePlaybackPrefix.length);
+  if (req.method === 'GET' && (liveAngleMatch || url.pathname.startsWith(livePlaybackPrefix))) {
+    const channel = liveAngleMatch?.[1] || '';
+    const relativePath = liveAngleMatch?.[2] || url.pathname.slice(livePlaybackPrefix.length);
     const segments = relativePath.split('/');
     if (!relativePath || !/^[A-Za-z0-9._/-]+$/.test(relativePath) || segments.some(segment => !segment || segment === '.' || segment === '..')) {
       res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
@@ -1304,7 +1319,10 @@ async function handleHttpRequest(req, res) {
     }
     const hlsBaseUrl = (process.env.MEDIAMTX_HLS_URL || 'http://127.0.0.1:8888').replace(/\/+$/, '');
     try {
-      const upstreamUrl = `${hlsBaseUrl}/live/${ingestToken}/${relativePath}${url.search}`;
+      const upstreamPath = channel
+        ? channel === 'main' ? liveIngestPath : `live/${channel}`
+        : `live/${ingestToken}`;
+      const upstreamUrl = `${hlsBaseUrl}/${upstreamPath}/${relativePath}${url.search}`;
       const upstream = await fetch(upstreamUrl);
       if (!upstream.ok) {
         const detail = await upstream.text();
@@ -1313,13 +1331,11 @@ async function handleHttpRequest(req, res) {
       }
       if (relativePath.endsWith('.m3u8')) {
         let playlist = await upstream.text();
-        const internalPrefix = `/live/${ingestToken}/`;
-        const publicPrefix = '/live/playback/';
-        playlist = playlist
-          .split(`${hlsBaseUrl}${internalPrefix}`).join(publicPrefix)
-          .split(`http://${req.headers.host}${internalPrefix}`).join(publicPrefix)
-          .split(`https://${req.headers.host}${internalPrefix}`).join(publicPrefix)
-          .split(internalPrefix).join(publicPrefix);
+        const internalPrefix = `/${upstreamPath}/`;
+        const publicPrefix = channel ? `/live/${channel}/` : '/live/playback/';
+        for (const prefix of [`${hlsBaseUrl}${internalPrefix}`, `http://${req.headers.host}${internalPrefix}`, `https://${req.headers.host}${internalPrefix}`, internalPrefix]) {
+          playlist = playlist.split(prefix).join(publicPrefix);
+        }
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store' });
         return res.end(playlist);
       }

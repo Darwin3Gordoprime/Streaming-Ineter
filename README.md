@@ -73,6 +73,10 @@ En **Administración → Biblioteca de videos**, publica MP4 con una miniatura J
 
 Si OBS WebSocket no conecta, confirma que OBS Studio esté abierto, que **Herramientas → Ajustes del servidor WebSocket** esté habilitado en el puerto indicado (normalmente 4455) y que la contraseña coincida. Con Docker, el host debe ser `host.docker.internal`; con inicio local, `127.0.0.1`. El firewall de Windows debe permitir conexiones desde Docker al puerto de OBS.
 
+## Ángulos de transmisión en vivo
+
+MediaMTX acepta fuentes RTMP simultáneas en `rtmp://<servidor>:1935/live/main`, `rtmp://<servidor>:1935/live/radar` y `rtmp://<servidor>:1935/live/cam2`. La página de Streaming muestra el selector de Cámara principal, Radar / gráficos y Cámara secundaria; los ángulos aparecen habilitados cuando MediaMTX detecta una fuente activa. El flujo anterior con clave de ingestión aleatoria sigue funcionando como Cámara principal.
+
 ## Difusión de alertas por correo
 
 Un administrador puede publicar avisos sísmicos, volcánicos, de tsunami, meteorológicos o hidrológicos desde **Administración → Difusión de alertas**. Cada aviso requiere confirmación humana y un enlace HTTPS de un sitio oficial de INETER. Al publicarlo aparece en **Alertas** y se envía un correo individual a las direcciones de las cuentas registradas; no se exponen las direcciones entre sí. Esta app no interpreta por sí sola los monitores como alertas oficiales.
