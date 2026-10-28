@@ -12,6 +12,13 @@ const { pipeline } = require('node:stream/promises');
 const root = __dirname;
 const dataDir = path.join(root, 'data');
 const recordingsDir = path.join(root, 'recordings');
+const videoCategoryLabels = {
+  registro_historico: 'Registro Histórico',
+  capacitacion: 'Material de Capacitación',
+  educativo: 'Material Educativo',
+  streamings_finalizados: 'Streamings Finalizados',
+  fenomenos_meteorologicos: 'Explicación de Fenómenos Meteorológicos'
+};
 function loadLocalEnvironment() {
   const file = path.join(root, '.env');
   if (!fs.existsSync(file)) return;
@@ -166,7 +173,10 @@ let cachedInternetLatency = { ms: null, checkedAt: null, status: 'pendiente' };
 let latencyProbePending = false;
 const processCpuSamples = new Map();
 const activePresence = new Map();
+const streamEventClients = new Set();
+const reactionTimes = new Map();
 let peakStreamViewers = 0;
+let streamEventTimer = null;
 
 function saveState() {
   const tmp = `${stateFile}.tmp`;
@@ -597,11 +607,54 @@ function streamStatsSnapshot() {
   for (const [userId, presence] of activePresence) {
     if (now - presence.lastSeen > 90_000) { activePresence.delete(userId); continue; }
     totalViewers++;
-    if (presence.view === 'streaming') viewers++;
+    if (presence.view === 'streaming' && now - presence.lastSeen <= 35_000) viewers++;
   }
   const sessionKey = activeSession ? `session:${activeSession.id}` : 'global';
   const likes = Number(state.likes?.[sessionKey] || 0);
   return { live, viewers, totalViewers, likes, sessionId: activeSession?.id || null, liveSince };
+}
+function stopStreamEventTicker() {
+  if (streamEventClients.size || !streamEventTimer) return;
+  clearInterval(streamEventTimer);
+  streamEventTimer = null;
+}
+function removeStreamEventClient(response) {
+  streamEventClients.delete(response);
+  stopStreamEventTicker();
+}
+function closeStreamEventClients() {
+  clearInterval(streamEventTimer);
+  streamEventTimer = null;
+  for (const response of streamEventClients) response.end();
+  streamEventClients.clear();
+}
+function broadcastStreamEvent(type, data) {
+  const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const response of streamEventClients) {
+    if (response.writableLength > 256 * 1024) {
+      response.destroy();
+      removeStreamEventClient(response);
+      continue;
+    }
+    try { response.write(frame); }
+    catch { response.destroy(); removeStreamEventClient(response); }
+  }
+}
+function addStreamEventClient(response) {
+  response.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no'
+  });
+  response.write('retry: 3000\n\n');
+  streamEventClients.add(response);
+  response.on('close', () => removeStreamEventClient(response));
+  response.write(`event: stats\ndata: ${JSON.stringify(streamStatsSnapshot())}\n\n`);
+  if (!streamEventTimer) {
+    streamEventTimer = setInterval(() => broadcastStreamEvent('stats', streamStatsSnapshot()), 2500);
+    streamEventTimer.unref();
+  }
 }
 function readNetworkCounters() {
   if (process.platform === 'win32') return new Promise(resolve => {
@@ -800,13 +853,18 @@ function listRecordings() {
           url,
           thumbnailUrl: video?.thumbnailFilename ? `/recordings/biblioteca/${encodeURIComponent(video.thumbnailFilename)}` : '',
           subtitlesUrl: video?.subtitleFilename ? `/recordings/biblioteca/${encodeURIComponent(video.subtitleFilename)}` : '',
-          subtitleLanguage: video?.subtitleLanguage || 'es'
+          subtitleLanguage: video?.subtitleLanguage || 'es',
+          category: videoCategoryLabels[video?.category] ? video.category : 'streamings_finalizados'
         });
       }
     }
   }
   walk(recordingsDir);
   return found.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+function listRecordingsByCategory(category = 'all') {
+  const recordings = listRecordings();
+  return category === 'all' ? recordings : recordings.filter(recording => recording.category === category);
 }
 function publicVideoBroadcast() {
   if (!videoBroadcast) return null;
@@ -1150,6 +1208,7 @@ async function handleHttpRequest(req, res) {
       playlistUrl: live ? '/live/playback/index.m3u8' : null
     });
   }
+  if (req.method === 'GET' && url.pathname === '/api/stream/events') return addStreamEventClient(res);
   if (req.method === 'GET' && url.pathname === '/api/live/qr') {
     const targetUrl = url.searchParams.get('url') || '';
     let target;
@@ -1321,6 +1380,7 @@ async function handleHttpRequest(req, res) {
       const body = await readBody(req).catch(() => ({}));
       const allowedViews = new Set(['inicio','streaming','videos','agricultura','pronostico','mapa','alertas','datos','administracion','monitoreo']);
       activePresence.set(user.id, { name: user.name, email: user.email, role: user.role || 'user', view: allowedViews.has(body?.view) ? body.view : 'inicio', lastSeen: Date.now() });
+      broadcastStreamEvent('stats', streamStatsSnapshot());
       return json(res, 200, { active: true, sampledAt: new Date().toISOString() });
     }
     if (req.method === 'GET' && url.pathname === '/api/firebase/push-token/status') {
@@ -1584,11 +1644,40 @@ async function handleHttpRequest(req, res) {
     }
     if (url.pathname === '/api/admin/videos' && req.method === 'GET') {
       if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
-      return json(res, 200, { videos: listRecordings(), broadcast: publicVideoBroadcast() });
+      const category = url.searchParams.get('category') || 'all';
+      if (category !== 'all' && !Object.hasOwn(videoCategoryLabels, category)) return json(res, 400, { error: 'La categoría de video no es válida.' });
+      return json(res, 200, { videos: listRecordingsByCategory(category), broadcast: publicVideoBroadcast() });
+    }
+    const videoCategoryMatch = url.pathname.match(/^\/api\/admin\/videos\/([\w-]+)\/category$/);
+    if (req.method === 'PUT' && videoCategoryMatch) {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const body = await readBody(req).catch(() => null);
+      const category = String(body?.category || '');
+      if (!Object.hasOwn(videoCategoryLabels, category)) return json(res, 400, { error: 'Selecciona una categoría de video válida.' });
+      const recording = listRecordings().find(item => item.id === videoCategoryMatch[1]);
+      if (!recording) return json(res, 404, { error: 'Video no encontrado en la biblioteca.' });
+      let video = state.videos.find(item => item.filename === recording.name);
+      if (!video) {
+        video = {
+          id: recording.id,
+          filename: recording.name,
+          title: recording.title,
+          createdAt: recording.createdAt,
+          thumbnailFilename: '',
+          subtitleFilename: '',
+          subtitleLanguage: 'es'
+        };
+        state.videos.push(video);
+      }
+      video.category = category;
+      saveState();
+      return json(res, 200, { video: { ...recording, category } });
     }
     if (req.method === 'POST' && url.pathname === '/api/admin/videos') {
       if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
       if (!/^video\/mp4(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return json(res, 415, { error: 'Elige un archivo MP4.' });
+      const category = String(req.headers['x-video-category'] || 'streamings_finalizados');
+      if (!Object.hasOwn(videoCategoryLabels, category)) { req.resume(); return json(res, 400, { error: 'Selecciona una categoría de video válida.' }); }
       const declaredSize = Number(req.headers['content-length'] || 0);
       const maxBytes = 1024 * 1024 * 1024;
       if (declaredSize > maxBytes) { req.resume(); return json(res, 413, { error: 'El video supera el límite de 1 GB.' }); }
@@ -1607,6 +1696,7 @@ async function handleHttpRequest(req, res) {
           filename: path.join('biblioteca', filename),
           title,
           createdAt: new Date().toISOString(),
+          category,
           thumbnailFilename: '',
           subtitleFilename: '',
           subtitleLanguage: 'es'
@@ -1771,6 +1861,23 @@ async function handleHttpRequest(req, res) {
     if (req.method === 'GET' && url.pathname === '/api/stream/stats') {
       return json(res, 200, streamStatsSnapshot());
     }
+    if (req.method === 'POST' && url.pathname === '/api/stream/reactions') {
+      if (!live) return json(res, 409, { error: 'Las reacciones solo están disponibles durante una transmisión en vivo.' });
+      const user = currentProfessional(req);
+      if (!user) return json(res, 401, { error: 'Inicia sesión para enviar una reacción.' });
+      const body = await readBody(req).catch(() => null);
+      const emoji = String(body?.emoji || '');
+      if (!['👏', '❤️', '😮', '👍'].includes(emoji)) return json(res, 400, { error: 'La reacción seleccionada no está permitida.' });
+      const now = Date.now();
+      const lastReactionAt = reactionTimes.get(user.id) || 0;
+      if (now - lastReactionAt < 800) return json(res, 429, { error: 'Espera un momento antes de enviar otra reacción.' });
+      reactionTimes.set(user.id, now);
+      if (reactionTimes.size > 10_000) {
+        for (const [userId, createdAt] of reactionTimes) if (now - createdAt > 60_000) reactionTimes.delete(userId);
+      }
+      broadcastStreamEvent('reaction', { emoji, createdAt: new Date(now).toISOString() });
+      return json(res, 202, { accepted: true });
+    }
     if (req.method === 'POST' && url.pathname === '/api/stream/like') {
       if (!live) return json(res, 409, { error: 'La transmisión no está en vivo.' });
       const user = currentProfessional(req);
@@ -1793,6 +1900,7 @@ async function handleHttpRequest(req, res) {
       state.likesLog.push({ key, sessionKey, userId: user?.id || null, createdAt: new Date().toISOString() });
       if (state.likesLog.length > 10000) state.likesLog = state.likesLog.slice(-10000);
       saveState();
+      broadcastStreamEvent('stats', streamStatsSnapshot());
       return json(res, 201, { liked: true, likes: state.likes[sessionKey], sessionId: currentSessionId });
     }
     if (req.method === 'GET' && url.pathname === '/api/obs/production') {
@@ -1954,7 +2062,12 @@ async function handleHttpRequest(req, res) {
     if (req.method === 'DELETE' && deleteMatch) {
       state.destinations = state.destinations.filter(d => d.id !== deleteMatch[1]); saveState(); return json(res, 200, publicState());
     }
-    if (req.method === 'GET' && url.pathname === '/api/recordings') return json(res, 200, { recordings: listRecordings() });
+    if (req.method === 'GET' && url.pathname === '/api/recordings') {
+      const category = url.searchParams.get('category') || 'all';
+      if (category !== 'all' && !Object.hasOwn(videoCategoryLabels, category)) return json(res, 400, { error: 'La categoría de video no es válida.' });
+      const recordings = listRecordings();
+      return json(res, 200, { recordings: category === 'all' ? recordings : recordings.filter(recording => recording.category === category), total: recordings.length });
+    }
     if (req.method === 'POST' && url.pathname === '/api/schedules') {
       const body = await readBody(req).catch(() => null);
       const title = String(body?.title || '').trim().slice(0, 80);
@@ -2032,6 +2145,7 @@ const bindAddress = process.env.BIND_ADDRESS || '127.0.0.1';
 server.listen(port, bindAddress, () => console.log(`Aplicación INETER escuchando en ${port}`));
 if (adminPort !== port) adminServer.listen(adminPort, bindAddress, () => console.log(`Dashboard administrativo escuchando en ${adminPort}`));
 process.on('SIGTERM', () => {
+  closeStreamEventClients();
   stopVideoBroadcast();
   stopRelay();
   const servers = adminPort === port ? [server] : [server, adminServer];

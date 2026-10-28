@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="monitor-dashboard.css" />
   <link rel="stylesheet" href="monitoring.css" />
   <link rel="stylesheet" href="monitor-operations.css?v=20261022-admin-create" />
+  <link rel="stylesheet" href="form-validation.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
@@ -38,18 +39,6 @@
             <p>Supervisión del servidor, la red, el equipo y las transmisiones institucionales.</p>
             <div class="monitor-control-status"><span id="monitor-hero-state">CONECTANDO CON EL SERVIDOR</span><small>Lecturas automáticas cada 2.5 segundos</small></div>
           </div>
-          <div class="monitor-screen-wall" aria-hidden="true">
-            <div class="monitor-screen monitor-screen-main">
-              <div class="monitor-screen-head"><span>VISTA REPRESENTATIVA</span><b>● INETER</b></div>
-              <svg viewBox="0 0 520 170" preserveAspectRatio="none"><path class="screen-gridline" d="M0 35H520M0 75H520M0 115H520M0 155H520"/><path class="screen-line screen-line-a" d="M0 125 C34 122 42 95 75 104 S120 125 152 82 S205 108 244 70 S291 90 325 52 S368 78 405 45 S452 67 520 20"/><path class="screen-line screen-line-b" d="M0 145 C52 136 55 150 100 131 S165 142 205 118 S268 132 300 105 S365 119 405 94 S475 110 520 82"/></svg>
-              <div class="monitor-screen-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-            </div>
-            <div class="monitor-screen-stack">
-              <div class="monitor-screen monitor-screen-mini"><div class="monitor-screen-head"><span>CPU</span><b>CORE</b></div><div class="monitor-gauges"><i></i><i></i><i></i></div><div class="monitor-screen-wave"></div></div>
-              <div class="monitor-screen monitor-screen-mini"><div class="monitor-screen-head"><span>MEMORIA</span><b>RAM</b></div><div class="monitor-mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
-            </div>
-            <div class="monitor-screen monitor-screen-foot"><span>OBS STUDIO</span><b>SEÑAL · SERVIDOR · PLATAFORMAS</b><i></i></div>
-          </div>
           <span class="monitor-hero-corner monitor-hero-corner-a"></span><span class="monitor-hero-corner monitor-hero-corner-b"></span>
         </section>
         <div class="monitor-admin-overview">
@@ -71,6 +60,7 @@
           <article class="monitor-metric"><span>USO DE CPU</span><strong id="monitor-cpu">Midiendo…</strong><small id="monitor-cpu-model">Procesador —</small></article>
         </div>
         <article class="monitor-chart-card"><div class="monitor-chart-heading"><div><b>Tráfico de red</b><small>Últimas lecturas durante la supervisión</small></div><div><span class="monitor-legend-up">↑ Subida</span><span class="monitor-legend-down">↓ Bajada</span></div></div><svg class="monitor-chart" id="monitor-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Gráfico de velocidad de red"><path class="monitor-chart-up" id="monitor-chart-up"/><path class="monitor-chart-down" id="monitor-chart-down"/></svg><div class="monitor-chart-axis"><span>Lecturas anteriores</span><span>Actual</span></div></article>
+        <p class="monitor-error" id="monitor-error" role="status" aria-live="polite"></p>
         <div class="monitor-detail-grid">
           <article class="monitor-detail-card monitor-device-card"><div class="monitor-device-heading"><div><h3>Rendimiento del equipo</h3><p>Uso en tiempo real, similar al Administrador de tareas.</p></div><span class="monitor-device-live">EN VIVO</span></div>
             <div class="monitor-resource-grid">
@@ -80,13 +70,14 @@
             </div>
             <dl><dt>Equipo</dt><dd id="monitor-host">—</dd><dt>Sistema operativo</dt><dd id="monitor-os">—</dd><dt>Arquitectura / Node</dt><dd id="monitor-runtime">—</dd><dt>Procesador</dt><dd id="monitor-device-cpu">—</dd><dt>RAM total · usada · libre</dt><dd id="monitor-memory">—</dd><dt>Memoria del backend INETER</dt><dd id="monitor-process-memory">—</dd><dt>Unidad de grabaciones libre / total</dt><dd id="monitor-disk">—</dd><dt>Interfaces de red</dt><dd id="monitor-interfaces">—</dd></dl>
           </article>
-          <article class="monitor-detail-card"><h3>OBS y plataformas</h3><div class="monitor-destination-list" id="monitor-destinations"><p class="empty-recordings">Esperando datos…</p></div><p class="monitor-last-update" id="monitor-updated">Última lectura: —</p><p class="monitor-error" id="monitor-error" role="status"></p></article>
+          <article class="monitor-detail-card"><h3>Última lectura</h3><p class="monitor-last-update" id="monitor-updated">Última lectura: —</p></article>
         </div>
         <div id="monitor-admin-create-notice" class="monitor-admin-create-notice" hidden>Solo la cuenta administradora principal puede crear otra cuenta administrativa.</div>
         <section class="monitor-detail-card monitor-admin-create" id="monitor-admin-create" hidden><h3>Administrar accesos</h3><p class="monitor-last-update">Crea una cuenta administradora de monitoreo. Solo la cuenta administradora principal puede usar esta función.</p><form id="monitor-create-admin-form" class="monitor-create-admin-form"><label for="monitor-new-admin-name">Nombre</label><input id="monitor-new-admin-name" name="name" maxlength="80" autocomplete="name" required /><label for="monitor-new-admin-email">Correo electrónico</label><input id="monitor-new-admin-email" name="email" type="email" autocomplete="email" required /><label for="monitor-new-admin-password">Contraseña inicial</label><input id="monitor-new-admin-password" name="password" type="password" minlength="10" autocomplete="new-password" required /><label for="monitor-new-admin-confirm">Confirmar contraseña</label><input id="monitor-new-admin-confirm" name="confirmPassword" type="password" minlength="10" autocomplete="new-password" required /><p id="monitor-create-admin-message" class="monitor-login-error" role="status" hidden></p><button id="monitor-create-admin-submit" class="monitor-primary-link" type="submit">Crear administrador</button></form></section>
       </section>
     </div>
   </main>
+  <script src="form-validation.js" defer></script>
   <script src="monitor-dashboard.js?v=20261022-admin-create" defer></script>
 </body>
 </html>

@@ -28,3 +28,6 @@ recordDeleteAfter: 0s
 paths:
   all_others:
     source: publisher
+hlsVariant: lowLatency
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms

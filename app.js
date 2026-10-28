@@ -2,18 +2,32 @@ const $ = selector => document.querySelector(selector);
 const modal = $('#modal');
 const obsModal = $('#obs-modal');
 let appState = null;
-let revealIngestKey = false;
 let currentView = 'inicio';
 let presenceTimer = null;
 let presenceBusy = false;
+let streamEventSource = null;
 let authMode = 'login';
 let authState = { professional: null, hasProfessionals: false };
 let renderedRecordingSignature = null;
 let renderedHomeRecordingSignature = null;
+let recordingFilter = 'all';
+let recordingsFilterRequest = 0;
 const platformSymbols = { YouTube: '▶', Twitch: '▣', Facebook: 'f', TikTok: '♪', Personalizado: '↗' };
 const platformClasses = { YouTube: 'youtube', Twitch: 'twitch', Facebook: 'facebook', TikTok: 'tiktok', Personalizado: 'personalizado' };
+const recordingCategories = {
+  registro_historico: 'Registro Histórico',
+  capacitacion: 'Material de Capacitación',
+  educativo: 'Material Educativo',
+  streamings_finalizados: 'Streamings Finalizados',
+  fenomenos_meteorologicos: 'Explicación de Fenómenos Meteorológicos'
+};
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]); }
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 3500); }
+const publishedAlertList = $('#published-alert-list');
+if (publishedAlertList) {
+  publishedAlertList.replaceChildren();
+  $('#published-alert-count').textContent = 'SIN AVISOS PUBLICADOS';
+}
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
   const body = await response.json().catch(() => ({}));
@@ -23,7 +37,8 @@ async function api(path, options = {}) {
 async function sendPresence() {
   if (!authState.professional || presenceBusy || document.hidden) return;
   presenceBusy = true;
-  try { await api('/api/presence', { method: 'POST', body: JSON.stringify({ view: currentView }) }); }
+  const view = currentView === 'inicio' && (appState?.live || appState?.videoBroadcast?.status === 'en vivo') ? 'streaming' : currentView;
+  try { await api('/api/presence', { method: 'POST', body: JSON.stringify({ view }) }); }
   catch { /* La presencia vence sola si el navegador pierde conexión. */ }
   finally { presenceBusy = false; }
 }
@@ -31,6 +46,23 @@ function syncPresence() {
   if (!authState.professional) { clearInterval(presenceTimer); presenceTimer = null; return; }
   sendPresence();
   if (!presenceTimer) presenceTimer = setInterval(sendPresence, 25_000);
+}
+function syncStreamEvents() {
+  if (!authState.professional) {
+    streamEventSource?.close();
+    streamEventSource = null;
+    return;
+  }
+  if (streamEventSource || !window.EventSource) return;
+  streamEventSource = new EventSource('/api/stream/events');
+  streamEventSource.addEventListener('stats', event => {
+    lastStreamStats = JSON.parse(event.data);
+    renderStreamStats(lastStreamStats);
+  });
+  streamEventSource.addEventListener('reaction', event => {
+    const data = JSON.parse(event.data);
+    renderLiveReaction(data.emoji);
+  });
 }
 function renderDestinations() {
   const destinations = appState?.destinations || [];
@@ -46,18 +78,21 @@ function renderDestinations() {
 }
 function renderRecordings(force = false) {
   const records = appState?.recordings || [];
-  $('#recording-count').textContent = `${records.length} ${records.length === 1 ? 'archivo' : 'archivos'}`;
-  $('#home-recording-count').textContent = `${records.length} ${records.length === 1 ? 'archivo' : 'archivos'}`;
-  $('#home-recording-summary').textContent = `${records.length} ${records.length === 1 ? 'video' : 'videos'}`;
-  const signature = records.map(record => `${record.url}:${record.createdAt}:${record.thumbnailUrl || ''}:${record.subtitlesUrl || ''}`).join('|');
-  const cards = records.length ? records.map(record => {
+  const visibleRecords = recordingFilter === 'all' ? records : records.filter(record => record.category === recordingFilter);
+  const total = appState?.recordingTotalCount ?? records.length;
+  $('#recording-count').textContent = `${total} ${total === 1 ? 'archivo' : 'archivos'}`;
+  $('#home-recording-count').textContent = `${total} ${total === 1 ? 'archivo' : 'archivos'}`;
+  $('#home-recording-summary').textContent = `${total} ${total === 1 ? 'video' : 'videos'}`;
+  const signature = `${recordingFilter}|${records.map(record => `${record.url}:${record.createdAt}:${record.category || ''}:${record.thumbnailUrl || ''}:${record.subtitlesUrl || ''}`).join('|')}`;
+  const cards = visibleRecords.length ? visibleRecords.map(record => {
     const title = record.title || record.name;
     const subtitleLanguage = record.subtitleLanguage || 'es';
+    const category = recordingCategories[record.category] || recordingCategories.streamings_finalizados;
     const track = record.subtitlesUrl
       ? `<track kind="captions" src="${escapeHtml(record.subtitlesUrl)}" srclang="${escapeHtml(subtitleLanguage)}" label="${escapeHtml(subtitleLanguage === 'es' ? 'Español' : subtitleLanguage)}" default />`
       : '';
-    return `<article class="vod-card"><div class="vod-player"><video controls preload="metadata" playsinline aria-label="Reproducir ${escapeHtml(title)}"${record.thumbnailUrl ? ` poster="${escapeHtml(record.thumbnailUrl)}"` : ''}><source src="${escapeHtml(record.url)}" type="video/mp4">${track}Tu navegador no puede reproducir este video.</video></div><div class="vod-details"><div><b>${escapeHtml(title)}</b><small>${new Date(record.createdAt).toLocaleString()} · ${formatSize(record.size)}${record.subtitlesUrl ? ' · Subtítulos disponibles' : ''}</small></div><a class="download-recording" href="${escapeHtml(record.url)}" download>Descargar ↓</a></div></article>`;
-  }).join('') : '<div class="empty-recordings">Aún no hay grabaciones. Cuando termine una transmisión aparecerá aquí para reproducirla o descargarla.</div>';
+    return `<article class="vod-card"><div class="vod-player"><video controls preload="metadata" playsinline aria-label="Reproducir ${escapeHtml(title)}"${record.thumbnailUrl ? ` poster="${escapeHtml(record.thumbnailUrl)}"` : ''}><source src="${escapeHtml(record.url)}" type="video/mp4">${track}Tu navegador no puede reproducir este video.</video></div><div class="vod-details"><div><b>${escapeHtml(title)}</b><small>${new Date(record.createdAt).toLocaleString()} · ${formatSize(record.size)}${record.subtitlesUrl ? ' · Subtítulos disponibles' : ''}</small><span class="vod-category">${escapeHtml(category)}</span></div><a class="download-recording" href="${escapeHtml(record.url)}" download>Descargar ↓</a></div></article>`;
+  }).join('') : `<div class="empty-recordings">${records.length ? 'No hay videos en esta categoría.' : 'Aún no hay videos disponibles en la biblioteca.'}</div>`;
   for (const [selector, signatureKey] of [['#recording-list', 'vod'], ['#home-recording-list', 'home']]) {
     const list = $(selector);
     const oldSignature = signatureKey === 'vod' ? renderedRecordingSignature : renderedHomeRecordingSignature;
@@ -69,10 +104,30 @@ function renderRecordings(force = false) {
     else renderedHomeRecordingSignature = signature;
   }
 }
+$('#recording-category-filters').addEventListener('click', async event => {
+  const button = event.target.closest('[data-recording-category]');
+  if (!button) return;
+  recordingFilter = button.dataset.recordingCategory;
+  const requestId = ++recordingsFilterRequest;
+  document.querySelectorAll('[data-recording-category]').forEach(item => {
+    const active = item === button;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+  renderRecordings(true);
+  try {
+    const result = await api(`/api/recordings?category=${encodeURIComponent(recordingFilter)}`);
+    if (requestId !== recordingsFilterRequest) return;
+    appState = { ...(appState || {}), recordings: result.recordings, recordingTotalCount: result.total };
+    renderRecordings(true);
+  } catch (error) {
+    if (requestId === recordingsFilterRequest) toast(`No se pudo filtrar la biblioteca: ${error.message}`);
+  }
+});
 function renderBroadcastAlerts(alerts = []) {
   const list = $('#published-alert-list');
   if (!list) return;
-  const items = Array.isArray(alerts) ? alerts : [];
+  const items = Array.isArray(alerts) ? [...new Map(alerts.filter(alert => alert?.id).map(alert => [alert.id, alert])).values()] : [];
   $('#published-alert-count').textContent = items.length ? `${items.length} AVISO${items.length === 1 ? '' : 'S'}` : 'SIN AVISOS PUBLICADOS';
   list.innerHTML = items.length ? items.map(alert => `<article class="published-alert-card severity-${escapeHtml(alert.severity)}"><div class="broadcast-alert-top"><h3>${escapeHtml(alert.title)}</h3><span class="tag ${alert.severity === 'urgente' ? 'danger' : alert.severity === 'precaucion' ? 'warning' : 'neutral'}">${escapeHtml(alert.severityLabel || alert.severity)}</span></div><div class="broadcast-alert-meta"><b>${escapeHtml(alert.categoryLabel || alert.category)}</b><span>${escapeHtml(alert.location || 'Nicaragua')}</span><time>${new Date(alert.createdAt).toLocaleString('es-NI')}</time></div><p>${escapeHtml(alert.message).replace(/\r?\n/g, '<br>')}</p><div class="broadcast-alert-meta"><span>Publicado por ${escapeHtml(alert.author || 'INETER')}</span><a href="${escapeHtml(alert.sourceUrl)}" target="_blank" rel="noopener">${escapeHtml(alert.sourceName || 'Ver fuente oficial')} ↗</a></div></article>`).join('') : '<p class="empty-recordings">No hay avisos de difusión publicados.</p>';
 }
@@ -141,9 +196,6 @@ function renderState() {
   $('#studio-status').textContent = `${selected.toUpperCase()} SELECCIONADO`;
   $('#connect-studio').innerHTML = `Ver guía de ${escapeHtml(selected)} <span>→</span>`;
   $('#check-studio').checked = true;
-  $('#ingest-server').textContent = appState.ingest.server;
-  $('#ingest-key').textContent = revealIngestKey ? appState.ingest.key : '••••••••••••••••••••••••';
-  $('#reveal-key').textContent = revealIngestKey ? 'Ocultar' : 'Mostrar';
   const videoBroadcast = appState.videoBroadcast;
   const videoBroadcastLive = videoBroadcast?.status === 'en vivo';
   $('#stream-state').textContent = appState.live || videoBroadcastLive ? 'EN VIVO' : videoBroadcast?.status === 'programada' ? 'PREVIA' : 'ESPERANDO SEÑAL';
@@ -157,7 +209,7 @@ function renderState() {
         ? `No se pudo transmitir el video “${videoBroadcast.title}”: ${videoBroadcast.error}`
         : appState.live
     ? `Señal activa desde ${new Date(appState.liveSince).toLocaleTimeString()}. En Vivo procesa ${destinationCount} salida(s) y guarda la grabación local.`
-    : 'Un solo clic inicia OBS; En Vivo toma la señal y la envía a todos los destinos configurados. En OBS: servicio “Personalizado”, con el servidor y clave de arriba.';
+    : 'Conecta el estudio para iniciar la emisión principal y publicarla en los destinos configurados.';
   if (appState.lastError) $('#stream-note').textContent = appState.lastError;
   const obs = appState.obs || {};
   const isTransmitting = Boolean(appState.live || obs.streaming || videoBroadcastLive);
@@ -170,7 +222,7 @@ function renderState() {
   $('#home-stream-description').textContent = appState.live
     ? `Señal activa desde ${new Date(appState.liveSince).toLocaleTimeString()}; la grabación se está guardando.`
     : obs.connected ? 'OBS está conectado y listo para iniciar la emisión.' : 'Conecta OBS para emitir y guardar tus transmisiones.';
-  $('#obs-connection').textContent = obs.connected ? `OBS conectado · ${obs.host}:${obs.port}` : (obs.error || 'OBS sin conectar');
+  $('#obs-connection').textContent = obs.connected ? 'Estudio conectado' : 'Estudio sin conectar';
   $('#obs-toggle').disabled = !obs.connected || (videoBroadcastActive && !obs.streaming);
   const startLabel = destinationCount ? 'Iniciar todas las plataformas' : 'Iniciar transmisión';
   const streamButtonLabel = obs.streaming ? 'Detener todas las salidas' : videoBroadcastActive ? 'Video en transmisión' : startLabel;
@@ -246,7 +298,12 @@ async function refreshLivePlayer() {
     livePlayerHls = null;
     livePlayerSource = liveState.playlistUrl;
     if (window.Hls?.isSupported()) {
-      livePlayerHls = new window.Hls({ liveSyncDurationCount: 3 });
+      livePlayerHls = new window.Hls({
+        lowLatencyMode: true,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 4,
+        maxLiveSyncPlaybackRate: 1.1
+      });
       livePlayerHls.on(window.Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {
           status.textContent = 'La transmisión está lista. Pulsa reproducir para comenzar.';
@@ -285,87 +342,6 @@ async function refreshLivePlayer() {
   } catch (error) {
     status.textContent = `No se pudo consultar la transmisión: ${error.message}`;
   } finally { livePlayerBusy = false; }
-}
-async function refreshObsPreview() {
-  if (refreshObsPreview.busy) return;
-  if (document.hidden || currentView !== 'streaming') return;
-  const image = $('#obs-preview-image');
-  const placeholder = $('#preview-placeholder');
-  const scene = $('#preview-scene');
-  if (!appState?.obs?.connected) {
-    image.hidden = true; image.removeAttribute('src'); placeholder.hidden = false;
-    placeholder.textContent = 'Conecta OBS para ver aquí lo que está saliendo al aire.';
-    scene.textContent = 'OBS desconectado'; scene.classList.remove('ready'); return;
-  }
-  refreshObsPreview.busy = true;
-  try {
-    const preview = await api('/api/obs/preview');
-    image.src = preview.imageData; image.hidden = false; placeholder.hidden = true;
-    scene.textContent = preview.sceneName || 'Escena activa'; scene.classList.add('ready');
-  } catch (error) {
-    image.hidden = true; placeholder.hidden = false;
-    placeholder.textContent = `No se pudo obtener la vista previa: ${error.message}`;
-    scene.textContent = 'Vista previa no disponible'; scene.classList.remove('ready');
-  } finally { refreshObsPreview.busy = false; }
-}
-let obsProductionBusy = false;
-let obsRecording = false;
-async function refreshObsProduction() {
-  const status = $('#obs-production-status');
-  const settingsButton = $('#obs-video-settings-apply');
-  const sceneSelect = $('#obs-scene-select');
-  const sceneButton = $('#obs-scene-apply');
-  if (!appState?.obs?.connected) {
-    obsRecording = false;
-    status.textContent = 'Conecta OBS para consultar los ajustes';
-    settingsButton.disabled = true;
-    sceneSelect.disabled = true;
-    sceneButton.disabled = true;
-    $('#obs-video-settings-current').textContent = 'Los ajustes actuales aparecerán al conectar OBS.';
-    $('#obs-scene-current').textContent = 'Conecta OBS para consultar y cambiar escenas.';
-    return;
-  }
-  if (obsProductionBusy) return;
-  obsProductionBusy = true;
-  status.textContent = 'Consultando OBS…';
-  try {
-    const production = await api('/api/obs/production');
-    obsRecording = production.recording;
-    const settings = production.videoSettings;
-    const profiles = [...$('#obs-video-profile').options].filter(option => option.value);
-    const profile = profiles.find(option => {
-      const [baseWidth, baseHeight, outputWidth, outputHeight] = option.dataset.dimensions.split(',').map(Number);
-      return settings.baseWidth === baseWidth && settings.baseHeight === baseHeight
-        && settings.outputWidth === outputWidth && settings.outputHeight === outputHeight;
-    });
-    $('#obs-video-profile').value = profile?.value || '';
-    const fps = settings.fpsNumerator / settings.fpsDenominator;
-    const fpsOption = [...$('#obs-video-fps').options].find(option => Number(option.value) === fps);
-    if (fpsOption) $('#obs-video-fps').value = fpsOption.value;
-    $('#obs-video-settings-current').textContent = `${settings.baseWidth} × ${settings.baseHeight} → ${settings.outputWidth} × ${settings.outputHeight} · ${fps.toFixed(fps % 1 ? 2 : 0)} FPS`;
-    const streaming = Boolean(appState.obs.streaming || appState.live);
-    settingsButton.disabled = streaming || obsRecording || !profile;
-    status.textContent = streaming || obsRecording ? 'Detén la emisión para cambiar formato' : 'OBS conectado';
-    sceneSelect.replaceChildren();
-    production.scenes.forEach(scene => {
-      const option = document.createElement('option');
-      option.value = scene.sceneName;
-      option.textContent = scene.sceneName;
-      sceneSelect.append(option);
-    });
-    sceneSelect.value = production.currentScene;
-    sceneSelect.dataset.currentScene = production.currentScene || '';
-    sceneSelect.disabled = production.scenes.length < 2;
-    sceneButton.disabled = production.scenes.length < 2 || sceneSelect.value === production.currentScene;
-    $('#obs-scene-current').textContent = production.currentScene
-      ? `Escena activa: ${production.currentScene}`
-      : 'No hay una escena activa disponible en OBS.';
-  } catch (error) {
-    status.textContent = `No se pudieron consultar los ajustes: ${error.message}`;
-    settingsButton.disabled = true;
-    sceneSelect.disabled = true;
-    sceneButton.disabled = true;
-  } finally { obsProductionBusy = false; }
 }
 function openModal() { $('#destination-form').reset(); $('#platform-select').dispatchEvent(new Event('change')); $('#modal-title').textContent = 'Conectar plataforma'; $('#modal-desc').textContent = 'Usa la URL RTMP y la clave que te entrega esa plataforma.'; modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); $('#channel-name').focus(); }
 function closeModal() { modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
@@ -438,8 +414,8 @@ async function refreshAuth() {
   try {
     authState = await api('/api/auth/me');
     renderAuth();
-    if (authState.professional) { syncPresence(); await refreshAdminStatus(); }
-    else syncPresence();
+    if (authState.professional) { syncPresence(); syncStreamEvents(); await refreshAdminStatus(); }
+    else { syncPresence(); syncStreamEvents(); }
   }
   catch { $('#profile-role').textContent = 'No se pudo consultar la sesión'; }
 }
@@ -526,7 +502,6 @@ $('#obs-form').addEventListener('submit', async event => {
   try {
     appState = await api('/api/obs/connect', { method: 'POST', body: JSON.stringify(body) });
     renderState(); closeObsModal(); toast('OBS conectado y configurado para enviar a En Vivo.');
-    if (currentView === 'streaming') await refreshObsProduction();
   } catch (error) { toast(error.message); $('#obs-connection').textContent = error.message; }
 });
 $('#platform-list').addEventListener('click', async event => {
@@ -587,6 +562,7 @@ $('#auth-logout').addEventListener('click', async () => {
     if (!window.ineterFirebaseAuth) throw new Error('Firebase Authentication no está disponible.');
     await window.ineterFirebaseAuth.signOut();
     authState = { professional: null, hasProfessionals: true }; renderAuth(); closeAuthModal();
+    syncStreamEvents();
     if (currentView === 'monitoreo') showView('inicio');
     toast('Sesión cerrada.');
   }
@@ -597,6 +573,7 @@ document.addEventListener('firebase-auth-session-ready', event => {
   authState = event.detail;
   renderAuth();
   syncPresence();
+  syncStreamEvents();
   refresh();
   refreshAdminStatus();
   if (new URLSearchParams(location.search).get('next') === '/admin.html') {
@@ -607,6 +584,7 @@ document.addEventListener('firebase-auth-session-ready', event => {
 document.addEventListener('firebase-auth-session-cleared', () => {
   clearInterval(presenceTimer); presenceTimer = null;
   authState = { professional: null, hasProfessionals: true };
+  syncStreamEvents();
   renderAuth();
 });
 const viewTitles = { inicio: 'Inicio', streaming: 'Streaming', videos: 'Videos bajo demanda', agricultura: 'Asesoría agrícola', pronostico: 'Pronóstico climático', mapa: 'Mapa climático', alertas: 'Alertas', datos: 'Datos climáticos' };
@@ -616,9 +594,9 @@ function showView(name, updateLocation = true, scrollTop = true) {
   currentView = name;
   renderAuth();
   if (name === 'videos') {
-    api('/api/recordings').then(({ recordings }) => {
+    api('/api/recordings').then(({ recordings, total }) => {
       if (currentView !== 'videos') return;
-      appState = { ...(appState || {}), recordings };
+      appState = { ...(appState || {}), recordings, recordingTotalCount: total };
       renderRecordings(true);
     }).catch(error => toast(`No se pudo cargar la biblioteca: ${error.message}`));
   }
@@ -629,7 +607,7 @@ function showView(name, updateLocation = true, scrollTop = true) {
   document.querySelectorAll('[data-view-target]').forEach(link => link.classList.toggle('active', link.dataset.viewTarget === name));
   $('.crumb b').textContent = viewTitles[name] || 'Inicio';
   if (authState.professional) sendPresence();
-  if (name === 'streaming') { refreshObsProduction(); refreshLivePlayer(); }
+  if (name === 'streaming') refreshLivePlayer();
   if (updateLocation && location.hash !== `#${name}`) history.pushState({ view: name }, '', `#${name}`);
   if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -653,7 +631,6 @@ async function toggleObsStream() {
   const action = appState.obs.streaming ? 'stop' : 'start';
   try {
     appState = await api('/api/obs/stream', { method: 'POST', body: JSON.stringify({ action }) }); renderState();
-    if (currentView === 'streaming') await refreshObsProduction();
     if (action === 'start') {
       const count = appState.destinations.length;
       if (appState.lastError) toast(appState.lastError);
@@ -665,47 +642,6 @@ async function toggleObsStream() {
 }
 $('#obs-toggle').addEventListener('click', toggleObsStream);
 $('#go-live').addEventListener('click', toggleObsStream);
-$('#obs-video-profile').addEventListener('change', () => {
-  $('#obs-video-settings-apply').disabled = !appState?.obs?.connected || appState.obs.streaming || appState.live || obsRecording;
-});
-$('#obs-video-settings-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const button = $('#obs-video-settings-apply');
-  button.disabled = true;
-  try {
-    await api('/api/obs/video-settings', {
-      method: 'PUT',
-      body: JSON.stringify({ profile: $('#obs-video-profile').value, fps: Number($('#obs-video-fps').value) })
-    });
-    appState = await api('/api/state');
-    renderState();
-    await refreshObsProduction();
-    toast('Formato, relación de aspecto y FPS aplicados en OBS.');
-  } catch (error) {
-    $('#obs-production-status').textContent = `No se pudo aplicar el formato: ${error.message}`;
-    button.disabled = false;
-  }
-});
-$('#obs-scene-select').addEventListener('change', () => {
-  $('#obs-scene-apply').disabled = !appState?.obs?.connected || $('#obs-scene-select').value === $('#obs-scene-select').dataset.currentScene;
-});
-$('#obs-scene-apply').addEventListener('click', async () => {
-  const button = $('#obs-scene-apply');
-  button.disabled = true;
-  try {
-    await api('/api/obs/scene', {
-      method: 'POST',
-      body: JSON.stringify({ sceneName: $('#obs-scene-select').value })
-    });
-    appState = await api('/api/state');
-    renderState();
-    await refreshObsProduction();
-    toast('Escena de OBS cambiada.');
-  } catch (error) {
-    $('#obs-production-status').textContent = `No se pudo cambiar la escena: ${error.message}`;
-    button.disabled = false;
-  }
-});
 const monitorHistory = [];
 let monitorRequestBusy = false;
 async function refreshAdminMonitor() {
@@ -773,11 +709,6 @@ async function refreshAdminMonitor() {
     $('#monitor-error').textContent = error.message.includes('403') ? 'Acceso denegado: inicia sesión con una cuenta de soporte o administración.' : `No se pudo actualizar: ${error.message}`;
   } finally { monitorRequestBusy = false; }
 }
-$('#copy-ingest').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(`Servidor: ${appState.ingest.server}\nClave: ${appState.ingest.key}`); toast('Servidor y clave copiados.'); }
-  catch { toast('Pulsa “Mostrar” y copia los datos manualmente.'); }
-});
-$('#reveal-key').addEventListener('click', () => { revealIngestKey = !revealIngestKey; renderState(); });
 $('#schedule').addEventListener('click', openScheduleModal);
 $('#schedule-close').addEventListener('click', closeScheduleModal);
 $('#schedule-cancel').addEventListener('click', closeScheduleModal);
@@ -843,6 +774,18 @@ function renderStreamStats(stats) {
   try { liked = localStorage.getItem(key) === '1'; } catch { liked = false; }
   button.disabled = !stats.live || liked;
   button.textContent = liked ? '♥ Gracias' : '♥ Me gusta';
+  document.querySelectorAll('[data-live-reaction]').forEach(reaction => { reaction.disabled = !stats.live; });
+}
+function renderLiveReaction(emoji) {
+  const container = document.getElementById('live-reaction-bursts');
+  if (!container) return;
+  const bubble = document.createElement('span');
+  bubble.className = 'live-reaction-burst';
+  bubble.textContent = emoji;
+  bubble.setAttribute('aria-label', `Reacción ${emoji}`);
+  container.append(bubble);
+  while (container.childElementCount > 6) container.firstElementChild.remove();
+  setTimeout(() => bubble.remove(), 3200);
 }
 async function refreshStreamStats() {
   if (!authState.professional || document.hidden) return;
@@ -864,6 +807,21 @@ document.getElementById('like-live-btn')?.addEventListener('click', async () => 
     toast(result.already ? 'Ya registramos tu me gusta para esta transmisión.' : '¡Gracias por tu me gusta!');
   } catch (error) { toast(error.message); }
 });
+document.querySelector('.live-reaction-menu')?.addEventListener('click', async event => {
+  const button = event.target.closest('[data-live-reaction]');
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  try {
+    await api('/api/stream/reactions', {
+      method: 'POST',
+      body: JSON.stringify({ emoji: button.dataset.liveReaction })
+    });
+    setTimeout(() => { if (lastStreamStats?.live) button.disabled = false; }, 800);
+  } catch (error) {
+    toast(`No se pudo enviar la reacción: ${error.message}`);
+    button.disabled = false;
+  }
+});
 $('#schedule-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-cancel-schedule]'); if (!button) return;
   try { appState = await api(`/api/schedules/${encodeURIComponent(button.dataset.cancelSchedule)}`, { method: 'DELETE' }); renderState(); toast('Transmisión programada cancelada.'); }
@@ -872,10 +830,10 @@ $('#schedule-list').addEventListener('click', async event => {
 restoreViewFromLocation(); refreshAuth().then(() => {
   if (location.hash === '#monitoreo' && ['admin','monitor_admin'].includes(authState.professional?.role)) showView('monitoreo', false, false);
 });
-refresh(); refreshLivePlayer(); setInterval(refresh, 2500); setInterval(refreshLivePlayer, 5000); setInterval(refreshObsPreview, 2000); setInterval(refreshAuth, 30_000); setInterval(refreshAdminMonitor, 2500); setInterval(refreshStreamStats, 5000);
+refresh(); refreshLivePlayer(); setInterval(refresh, 2500); setInterval(refreshLivePlayer, 5000); setInterval(refreshAuth, 30_000); setInterval(refreshAdminMonitor, 2500); setInterval(refreshStreamStats, 15_000);
 window.addEventListener('online', () => { refresh(); refreshLivePlayer(); refreshAuth(); refreshAdminMonitor(); refreshStreamStats(); sendPresence(); });
 window.addEventListener('focus', () => { refresh(); refreshLivePlayer(); refreshAuth(); refreshAdminMonitor(); sendPresence(); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshLivePlayer(); refreshAuth(); refreshObsPreview(); refreshAdminMonitor(); refreshStreamStats(); sendPresence(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshLivePlayer(); refreshAuth(); refreshAdminMonitor(); refreshStreamStats(); sendPresence(); } });
 
 // Ayudante informativo local: responde preguntas frecuentes y dirige al usuario
 // a los módulos correspondientes sin enviar mensajes ni datos a servicios externos.
@@ -884,7 +842,7 @@ const botLauncher = document.querySelector('#info-bot-launcher');
 const botMessages = document.querySelector('#info-bot-messages');
 const botInput = document.querySelector('#info-bot-input');
 const botAnswers = [
-  { keys: ['stream', 'obs', 'transmit', 'emitir', 'salida', 'youtube', 'twitch'], view: 'streaming', answer: 'En Streaming puedes conectar OBS mediante WebSocket, registrar destinos RTMP y revisar la vista previa. Para emitir, OBS debe estar abierto y conectado; las claves de cada plataforma se configuran en sus controles.' },
+  { keys: ['stream', 'obs', 'transmit', 'emitir', 'salida', 'youtube', 'twitch'], view: 'streaming', answer: 'En Streaming puedes conectar el estudio y controlar la emisión principal. Durante una transmisión, el reproductor muestra espectadores y permite enviar reacciones.' },
   { keys: ['video', 'grabacion', 'biblioteca', 'reproduc', 'descargar'], view: 'videos', answer: 'Videos bajo demanda reúne las grabaciones guardadas cuando finaliza una transmisión. Desde esa sección puedes reproducirlas y descargarlas.' },
   { keys: ['agric', 'sembr', 'cultivo', 'siembra', 'parcela'], view: 'agricultura', answer: 'Asesoría agrícola ofrece una orientación preliminar basada en la humedad observada y el pronóstico que consultes. Confirma las recomendaciones con los boletines de INETER y el personal técnico agrícola.' },
   { keys: ['pronost', 'clima', 'tiempo', 'lluvia', 'temperatura'], view: 'pronostico', answer: 'Pronóstico climático muestra la información meteorológica disponible por zona. La portada incluye un resumen de condiciones y cinco días; verifica siempre los avisos oficiales vigentes.' },
