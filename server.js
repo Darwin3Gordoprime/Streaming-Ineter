@@ -1016,7 +1016,7 @@ async function startVideoBroadcast(broadcast) {
       '-hide_banner', '-loglevel', 'warning', '-re', '-i', inputPath, '-t', String(MAX_LIVE_DURATION_SECONDS),
       '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast',
       '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k',
-      '-ar', '44100', '-f', 'flv', output
+      '-ar', '44100', '-f', 'flv', '-flvflags', 'no_duration_filesize', output
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
     broadcast.jobs.push(child);
     child.stderr.on('data', data => {
@@ -1100,7 +1100,10 @@ function startRelay() {
     state.sessions.push(activeSession); saveState();
   }
   const source = `${process.env.MEDIAMTX_RTSP_BASE || 'rtsp://127.0.0.1:8554'}/${liveIngestPath}`;
-  const base = ['-hide_banner', '-loglevel', 'warning', '-rtsp_transport', 'tcp', '-i', source];
+  const base = [
+    '-hide_banner', '-loglevel', 'warning', '-rtsp_transport', 'tcp',
+    '-analyzeduration', '10M', '-probesize', '10M', '-i', source
+  ];
   const destinations = activeStreamDestinations();
   const destinationIds = new Set(destinations.map(destination => destination.id));
   for (const job of ffmpegJobs) {
@@ -1121,7 +1124,12 @@ function startRelay() {
       const separator = destination.serverUrl.includes('?') ? '&' : (destination.serverUrl.endsWith('/') ? '' : '/');
       const output = `${destination.serverUrl}${separator}${key}`;
       destinationOutputs.set(destination.id, 'conectando');
-      spawnFfmpeg([...base, '-map', '0:v:0?', '-map', '0:a:0?', '-c', 'copy', '-f', 'flv', output], `salida ${destination.name}`, destination.id);
+      spawnFfmpeg([
+        ...base,
+        '-map', '0:v:0?', '-map', '0:a:0?',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+        '-f', 'flv', '-flvflags', 'no_duration_filesize', output
+      ], `salida ${destination.name}`, destination.id);
     } catch { lastError = `No se pudo leer la clave de ${destination.name}.`; }
   }
 }
