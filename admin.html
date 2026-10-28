@@ -31,7 +31,9 @@
   </div>
 
   <div id="admin-shell" class="admin-shell" hidden>
-    <aside class="sidebar">
+    <div class="admin-sidebar-backdrop" id="admin-sidebar-backdrop" hidden></div>
+    <aside class="sidebar" id="admin-sidebar">
+      <button class="admin-sidebar-close" id="admin-sidebar-close" type="button" aria-label="Cerrar menú">×</button>
       <a class="brand" href="/" data-main-app="/"><img src="assets/ineter-logo.svg" alt="" onerror="this.src='assets/ineter-logo.png';this.removeAttribute('onerror')" /><span>INETER <em>en vivo</em><small>Centro de administración</small></span></a>
       <div class="side-status"><i></i><span>Sesión principal verificada</span></div>
       <nav class="admin-nav" aria-label="Administración">
@@ -48,7 +50,7 @@
     </aside>
 
     <main class="main-area">
-      <header class="topbar"><div><span class="eyebrow">INETER · NICARAGUA</span><h1 id="page-title">Resumen administrativo</h1></div><div class="account-chip"><span class="avatar" id="admin-avatar">IN</span><span><b id="admin-name">Administrador</b><small id="admin-email"></small></span><button id="admin-signout" title="Cerrar sesión" aria-label="Cerrar sesión">↪</button></div></header>
+      <header class="topbar"><button class="admin-menu-toggle" id="admin-menu-toggle" type="button" aria-expanded="false" aria-controls="admin-sidebar" aria-label="Abrir menú">☰</button><div><span class="eyebrow">INETER · NICARAGUA</span><h1 id="page-title">Resumen administrativo</h1></div><div class="account-chip"><span class="avatar" id="admin-avatar">IN</span><span><b id="admin-name">Administrador</b><small id="admin-email"></small></span><button id="admin-signout" title="Cerrar sesión" aria-label="Cerrar sesión">↪</button></div></header>
       <div id="page-error" class="notice error" role="alert" hidden></div>
       <section class="admin-section active" data-panel="overview">
         <div class="welcome-banner"><div><p class="eyebrow">CENTRO DE CONTROL</p><h2>Administración de INETER en vivo</h2><p>Gestiona las cuentas registradas y las herramientas de la plataforma desde un solo lugar.</p></div><div class="banner-mark">INETER<br/><small>NICARAGUA</small></div></div>
@@ -57,7 +59,7 @@
       </section>
 
       <section class="admin-section" data-panel="streaming">
-        <div class="section-intro"><div><span class="eyebrow">TRANSMISIÓN EN VIVO</span><h2>Estudio de streaming</h2><p>Configura OBS y las plataformas de salida. La señal también estará disponible para usuarios en la sección Streaming.</p></div><a class="button secondary" href="/" data-main-app="/#streaming" target="_blank" rel="noopener">Abrir página de usuarios ↗</a></div>
+        <div class="section-intro"><div><span class="eyebrow">TRANSMISIÓN EN VIVO</span><h2>Estudio de streaming</h2><p>Perfiles independientes para preparar cada emisor y sus destinos de retransmisión.</p></div><a class="button secondary" href="/" data-main-app="/#streaming" target="_blank" rel="noopener">Abrir página de usuarios ↗</a></div>
         <div class="admin-stream-grid">
           <article class="card admin-stream-status-card">
             <div class="card-heading"><div><span class="eyebrow">ESTADO DE LA SEÑAL</span><h3>Transmisión de INETER</h3></div><span id="admin-stream-live-status" class="pill">Consultando…</span></div>
@@ -65,21 +67,11 @@
             <div class="admin-stream-actions"><button class="button primary" id="admin-stream-toggle" type="button" disabled>Iniciar transmisión</button><a class="button secondary" href="/" data-main-app="/#streaming" target="_blank" rel="noopener">Ver como usuario</a></div>
             <p id="admin-stream-feedback" class="form-message" role="status"></p>
           </article>
-          <article class="card">
-            <div class="card-heading"><div><span class="eyebrow">OBS WEBSOCKET</span><h3>Conectar el estudio</h3></div></div>
-            <form id="admin-stream-obs-form" class="admin-stream-form">
-              <label>Equipo de OBS<input name="host" value="host.docker.internal" maxlength="253" required /></label>
-              <label>Puerto<input name="port" type="number" min="1" max="65535" value="4455" required /></label>
-              <label class="wide">Contraseña WebSocket<input name="password" type="password" autocomplete="new-password" placeholder="Vacío para reutilizar la contraseña guardada" /></label>
-              <button class="button secondary wide" id="admin-stream-connect" type="submit">Conectar y vincular OBS</button>
-            </form>
-            <p class="form-message">En OBS activa Herramientas → Ajustes del servidor WebSocket. La contraseña se cifra en el servidor. Si ya está guardada, deja el campo vacío para conservarla.</p>
-          </article>
           <article class="card admin-stream-destinations-card">
-            <div class="card-heading"><div><span class="eyebrow">SALIDAS RTMP</span><h3>Plataformas configuradas</h3></div><span class="pill" id="admin-stream-destination-count">0 destinos</span></div>
+            <div class="card-heading"><div><span class="eyebrow">SALIDAS RTMP</span><h3>Plataformas configuradas</h3><p>Credenciales cifradas y disponibles para asignar a cada perfil.</p></div><span class="pill" id="admin-stream-destination-count">0 destinos</span></div>
             <div id="admin-stream-destination-list" class="admin-stream-destination-list">Cargando plataformas…</div>
             <form id="admin-stream-destination-form" class="admin-stream-form">
-              <label>Plataforma<select name="platform" required><option>YouTube</option><option>Twitch</option><option>Facebook</option><option>TikTok</option><option>Personalizado</option></select></label>
+              <label>Plataforma<select name="platform" required><option value="YouTube">YouTube Live</option><option>Twitch</option><option>Facebook</option><option>TikTok</option><option>Personalizado</option></select></label>
               <label>Nombre del canal<input name="name" maxlength="40" placeholder="Ej. Canal INETER" required /></label>
               <label class="wide">URL del servidor RTMP<input name="serverUrl" type="url" placeholder="rtmps://servidor/plataforma" required /></label>
               <label class="wide">Clave de transmisión<input name="key" type="password" autocomplete="new-password" required /></label>
@@ -87,14 +79,17 @@
               <button class="button secondary wide" id="admin-stream-add-destination" type="submit">Guardar plataforma</button>
             </form>
           </article>
-          <article class="card">
-            <div class="card-heading"><div><span class="eyebrow">FUENTE DE VIDEO</span><h3>Servidor RTMP para OBS</h3></div></div>
-            <div class="admin-stream-ingest-row"><small>Servidor</small><code id="admin-stream-ingest-server">—</code></div>
-            <div class="admin-stream-ingest-row"><small>Clave privada</small><code id="admin-stream-ingest-key">••••••••••••</code><button class="text-button" id="admin-stream-reveal-key" type="button">Mostrar</button></div>
-            <div class="admin-stream-actions"><button class="button secondary" id="admin-stream-copy-ingest" type="button">Copiar datos</button></div>
-            <p class="form-message">OBS y los videos retransmitidos desde la biblioteca se publican en la página de usuarios y se envían a las plataformas guardadas.</p>
-          </article>
         </div>
+        <section class="card studio-suite" aria-label="Perfiles de software de emisión">
+          <div class="card-heading"><div><span class="eyebrow">PERFILES DE EMISIÓN</span><h3>Configuración por software</h3><p>Guarda cada perfil de forma independiente. La señal entra por Azure MediaMTX y se retransmite a los destinos seleccionados.</p></div><span class="pill" id="active-studio-profile">OBS Studio activo</span></div>
+          <div class="studio-software-tabs" role="tablist" aria-label="Software de emisión">
+            <button type="button" role="tab" id="studio-tab-obs" aria-controls="studio-panel-obs" aria-selected="true" data-studio-tab="obs">OBS Studio</button>
+            <button type="button" role="tab" id="studio-tab-streamyard" aria-controls="studio-panel-streamyard" aria-selected="false" data-studio-tab="streamyard">StreamYard</button>
+            <button type="button" role="tab" id="studio-tab-streamlabs" aria-controls="studio-panel-streamlabs" aria-selected="false" data-studio-tab="streamlabs">Streamlabs Desktop</button>
+            <button type="button" role="tab" id="studio-tab-prism" aria-controls="studio-panel-prism" aria-selected="false" data-studio-tab="prism">PRISM Live Studio</button>
+          </div>
+          <div id="studio-profile-panels"></div>
+        </section>
       </section>
 
       <section class="admin-section" data-panel="system">
@@ -121,7 +116,7 @@
       <section class="admin-section" data-panel="alerts">
         <div class="section-intro"><div><span class="eyebrow">DIFUSIÓN INSTITUCIONAL</span><h2>Alertas y avisos</h2><p>Publica avisos verificados. La app intenta difundirlos por correo y notificaciones habilitadas.</p></div><span class="pill" id="recipient-count">Destinatarios: —</span></div>
         <article class="card"><form id="alert-form" class="alert-form"><label>Tipo de aviso<select name="category" required><option value="meteorologica">Meteorológica</option><option value="sismica">Sísmica</option><option value="volcanica">Volcánica</option><option value="tsunami">Tsunami</option><option value="hidrologica">Hidrológica</option><option value="otra">Otro aviso</option></select></label><label>Prioridad<select name="severity" required><option value="informativa">Informativa</option><option value="precaucion">Precaución</option><option value="urgente">Urgente</option></select></label><label class="wide">Título<input name="title" minlength="5" maxlength="140" required /></label><label>Zona o municipio<input name="location" maxlength="120" placeholder="Ej. Carazo" /></label><label>Fuente oficial<input name="sourceName" maxlength="80" value="INETER" required /></label><label class="wide">Enlace oficial de INETER<input name="sourceUrl" type="url" placeholder="https://www.ineter.gob.ni/…" required /></label><label class="wide">Información del aviso<textarea name="message" minlength="10" maxlength="3000" rows="4" required></textarea></label><label class="confirm wide"><input name="confirmedOfficial" type="checkbox" required /> Confirmo que la información fue verificada con una fuente oficial.</label><div class="wide form-actions"><button class="button primary" id="publish-alert">Publicar y difundir</button><span id="alert-message" class="form-message" role="status"></span></div></form></article>
-        <article class="card table-card"><div class="card-heading"><div><h3>Historial de avisos</h3><p>Estado de envío y publicación.</p></div><button class="button secondary" id="refresh-alerts">Actualizar</button></div><div id="alert-list" class="record-list">Cargando avisos…</div></article>
+        <article class="card table-card"><div class="card-heading"><div><h3>Historial de avisos</h3><p>Estado de envío y publicación.</p></div><div class="alert-history-actions"><button class="button secondary" id="refresh-alerts">Actualizar</button><button class="button secondary danger" id="clear-alerts">Limpiar registro de alertas</button></div></div><p id="clear-alerts-feedback" class="form-message" role="status" aria-live="polite"></p><div id="alert-list" class="record-list">Cargando avisos…</div></article>
       </section>
 
       <section class="admin-section" data-panel="requests">

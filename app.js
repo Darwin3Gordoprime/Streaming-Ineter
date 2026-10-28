@@ -346,7 +346,8 @@ async function refreshLivePlayer() {
 function openModal() { $('#destination-form').reset(); $('#platform-select').dispatchEvent(new Event('change')); $('#modal-title').textContent = 'Conectar plataforma'; $('#modal-desc').textContent = 'Usa la URL RTMP y la clave que te entrega esa plataforma.'; modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); $('#channel-name').focus(); }
 function closeModal() { modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
 function openObsModal() {
-  if (appState?.obs) { $('#obs-host').value = appState.obs.host || 'host.docker.internal'; $('#obs-port').value = appState.obs.port || 4455; }
+  $('#obs-host').value = appState?.obs?.host || 'host.docker.internal';
+  $('#obs-port').value = appState?.obs?.port || 4458;
   $('#obs-password').value = '';
   obsModal.classList.add('open'); obsModal.setAttribute('aria-hidden','false'); $('#obs-password').focus();
 }
@@ -620,8 +621,30 @@ function restoreViewFromLocation() {
 }
 document.querySelectorAll('[data-view-target]').forEach(link => link.addEventListener('click', event => {
   event.preventDefault();
+  setMobileMenuOpen(false);
   showView(link.dataset.viewTarget);
 }));
+const mobileMenuToggle = $('#mobile-menu-toggle');
+const mobileSidebar = $('#sidebar');
+const mobileSidebarBackdrop = $('#sidebar-backdrop');
+function setMobileMenuOpen(open) {
+  mobileSidebar.classList.toggle('open', open);
+  mobileSidebarBackdrop.classList.toggle('active', open);
+  mobileMenuToggle.setAttribute('aria-expanded', String(open));
+  mobileMenuToggle.setAttribute('aria-label', open ? 'Cerrar menú' : 'Abrir menú');
+}
+mobileMenuToggle.addEventListener('click', () => setMobileMenuOpen(!mobileSidebar.classList.contains('open')));
+$('#sidebar-close').addEventListener('click', () => setMobileMenuOpen(false));
+mobileSidebarBackdrop.addEventListener('click', () => setMobileMenuOpen(false));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && mobileSidebar.classList.contains('open')) {
+    setMobileMenuOpen(false);
+    mobileMenuToggle.focus();
+  }
+});
+window.addEventListener('resize', () => {
+  if (window.matchMedia('(min-width: 1025px)').matches) setMobileMenuOpen(false);
+});
 window.addEventListener('popstate', restoreViewFromLocation);
 window.addEventListener('hashchange', restoreViewFromLocation);
 $('#connect-studio').addEventListener('click', () => appState?.studio === 'StreamYard' ? openStreamYardModal() : openObsModal());

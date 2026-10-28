@@ -14,8 +14,14 @@ let currentAdmin = null;
 let systemBusy = false;
 let adminStreamState = null;
 let adminStreamBusy = false;
-let revealAdminIngestKey = false;
 let adminObsFormEdited = false;
+let activeStudioTab = 'obs';
+let alertRefreshTimer = null;
+const visibleStudioKeys = new Set();
+const studioProfileFeedback = {};
+const studioSoftwareLabels = { obs: 'OBS Studio', streamyard: 'StreamYard', streamlabs: 'Streamlabs Desktop', prism: 'PRISM Live Studio' };
+const studioSources = { camera: 'Cámara', screen: 'Captura de pantalla', capture: 'Capturadora externa', mixed: 'Escena mixta' };
+const studioResolutions = { sd: 'SD · 360p', '720p': 'HD · 720p', '1080p': 'Full HD · 1080p' };
 let adminFirebase = null;
 const systemNetworkHistory = [];
 function configureMainAppLinks() {
@@ -94,6 +100,7 @@ function setError(message = '') {
 function setPanel(name) {
   const titles = { overview: 'Resumen administrativo', streaming: 'Estudio de streaming', system: 'Equipo en vivo', accounts: 'Cuentas y roles', alerts: 'Alertas y difusión', requests: 'Solicitudes de acceso', videos: 'Biblioteca de videos', reports: 'Reportes agrícolas' };
   if (!Object.hasOwn(titles, name)) name = 'overview';
+  setAdminMenuOpen(false);
   $$('.admin-nav button').forEach(button => button.classList.toggle('active', button.dataset.section === name));
   $$('.admin-section').forEach(panel => panel.classList.toggle('active', panel.dataset.panel === name));
   $('#page-title').textContent = titles[name] || titles.overview;
@@ -105,6 +112,15 @@ function setPanel(name) {
   if (name === 'videos') loadAdminVideos();
   if (name === 'system') updateSystemMetrics();
   if (name === 'streaming') loadAdminStream();
+}
+function setAdminMenuOpen(open) {
+  const shell = $('#admin-shell');
+  const toggle = $('#admin-menu-toggle');
+  const backdrop = $('#admin-sidebar-backdrop');
+  shell.classList.toggle('menu-open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.setAttribute('aria-label', open ? 'Cerrar menú' : 'Abrir menú');
+  backdrop.hidden = !open;
 }
 async function boot() {
   try {
@@ -245,6 +261,18 @@ async function updateSystemMetrics() {
 }
 
 $$('.admin-nav button').forEach(button => button.addEventListener('click', () => setPanel(button.dataset.section)));
+$('#admin-menu-toggle').addEventListener('click', () => setAdminMenuOpen(!$('#admin-shell').classList.contains('menu-open')));
+$('#admin-sidebar-close').addEventListener('click', () => setAdminMenuOpen(false));
+$('#admin-sidebar-backdrop').addEventListener('click', () => setAdminMenuOpen(false));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('#admin-shell').classList.contains('menu-open')) {
+    setAdminMenuOpen(false);
+    $('#admin-menu-toggle').focus();
+  }
+});
+window.addEventListener('resize', () => {
+  if (window.matchMedia('(min-width: 761px)').matches) setAdminMenuOpen(false);
+});
 $$('[data-open]').forEach(button => button.addEventListener('click', () => setPanel(button.dataset.open)));
 window.addEventListener('hashchange', () => {
   const name = location.hash.slice(1);
@@ -260,29 +288,62 @@ async function refreshStreamStatsAdmin() {
     if (likes) likes.textContent = String(stats.likes ?? 0);
   } catch { /* Se reintenta en el siguiente ciclo. */ }
 }
+function renderStudioProfiles() {
+  const state = adminStreamState || {};
+  const profiles = state.studioProfiles || {};
+  const destinations = state.destinations || [];
+  const panels = $('#studio-profile-panels');
+  if (!panels) return;
+  $('#active-studio-profile').textContent = `${studioSoftwareLabels[state.activeStudioProfile] || studioSoftwareLabels.obs} activo`;
+  panels.innerHTML = Object.entries(studioSoftwareLabels).map(([software, label]) => {
+    const profile = profiles[software] || { source: 'camera', resolution: '1080p', aspectRatio: '16:9', sceneName: '', destinationIds: null };
+    const allDestinationsSelected = !Array.isArray(profile.destinationIds);
+    const targetOptions = destinations.length
+      ? destinations.map(destination => `<label class="studio-destination-option"><input name="destinationIds" type="checkbox" value="${escapeHtml(destination.id)}" ${allDestinationsSelected || profile.destinationIds.includes(destination.id) ? 'checked' : ''} /><span><b>${escapeHtml(destination.name)}</b><small>${escapeHtml(destination.platform)} · ${escapeHtml(destination.outputStatus || 'Listo')}</small></span></label>`).join('')
+      : '<p class="form-message">Configura al menos una salida RTMP en la sección correspondiente para habilitar YouTube Live u otras plataformas.</p>';
+    const isActive = state.activeStudioProfile === software;
+    const status = software === 'obs'
+      ? (state.obs?.connected ? 'WebSocket conectado' : state.obs?.configured ? 'WebSocket sin conexión' : 'WebSocket pendiente')
+      : 'RTMP manual';
+    const ingestServer = escapeHtml(state.ingest?.server || 'No disponible');
+    const ingestKey = state.ingest?.key || '';
+    const showKey = visibleStudioKeys.has(software);
+    return `<article class="studio-profile-panel${activeStudioTab === software ? ' active' : ''}" id="studio-panel-${software}" role="tabpanel" aria-labelledby="studio-tab-${software}" data-studio-panel="${software}" ${activeStudioTab === software ? '' : 'hidden'}>
+      <div class="studio-profile-heading"><div><h4>Perfil ${label}</h4><p>${software === 'obs' ? 'Control WebSocket y publicación RTMP hacia la VM de Azure.' : 'Perfil guardado; aplica la fuente y la calidad en la aplicación emisora.'}</p></div><span class="pill${isActive ? ' is-active' : ''}" data-profile-status="${software}">${isActive ? 'ACTIVO · ' : ''}${status}</span></div>
+      <form class="studio-profile-form" data-studio-profile-form="${software}">
+        <label>Fuente de video<select name="source" required>${Object.entries(studioSources).map(([value, name]) => `<option value="${value}" ${profile.source === value ? 'selected' : ''}>${name}</option>`).join('')}</select></label>
+        <label>Resolución<select name="resolution" required>${Object.entries(studioResolutions).map(([value, name]) => `<option value="${value}" ${profile.resolution === value ? 'selected' : ''}>${name}</option>`).join('')}</select></label>
+        <label>Relación de aspecto<select name="aspectRatio" required><option value="16:9" ${profile.aspectRatio === '16:9' ? 'selected' : ''}>Horizontal · 16:9</option><option value="9:16" ${profile.aspectRatio === '9:16' ? 'selected' : ''}>Vertical · 9:16</option></select></label>
+        ${software === 'obs' ? `<label>Escena activa de OBS<select name="sceneName"><option value="">No cambiar escena</option>${(state.obsProduction?.scenes || []).map(scene => `<option value="${escapeHtml(scene.sceneName)}" ${profile.sceneName === scene.sceneName ? 'selected' : ''}>${escapeHtml(scene.sceneName)}</option>`).join('')}${profile.sceneName && !(state.obsProduction?.scenes || []).some(scene => scene.sceneName === profile.sceneName) ? `<option value="${escapeHtml(profile.sceneName)}" selected>${escapeHtml(profile.sceneName)} (no disponible)</option>` : ''}</select></label>${state.obsProduction?.error ? `<p class="form-message error wide">No se pudieron cargar las escenas de OBS: ${escapeHtml(state.obsProduction.error)}</p>` : ''}` : ''}
+        <fieldset class="studio-destination-fieldset"><legend>Salidas automáticas</legend><p>Elige los destinos configurados. Azure MediaMTX recibe la señal por el puerto RTMP 1935.</p><div class="studio-destination-options">${targetOptions}</div></fieldset>
+        <div class="studio-ingest"><small>MediaMTX en Azure · servidor RTMP de entrada</small><code data-profile-ingest-server="${software}">${ingestServer}</code><div><code data-profile-ingest-key="${software}">${showKey ? escapeHtml(ingestKey || 'No disponible') : '••••••••••••••••••••••••'}</code><button type="button" class="text-button" data-profile-key-reveal="${software}">${showKey ? 'Ocultar clave' : 'Mostrar clave'}</button><button type="button" class="text-button" data-profile-key-copy="${software}">Copiar RTMP</button></div></div>
+        <div class="studio-profile-actions"><button class="button primary" type="submit">Guardar y activar ${label}</button>${software === 'obs' ? '<button class="button secondary" type="button" data-apply-obs-format>Aplicar resolución a OBS</button>' : ''}<span class="form-message${studioProfileFeedback[software]?.error ? ' error' : studioProfileFeedback[software]?.success ? ' success' : ''}" role="status" data-profile-feedback="${software}">${escapeHtml(studioProfileFeedback[software]?.text || '')}</span></div>
+      </form>
+      ${software === 'obs' ? `<form id="admin-stream-obs-form" class="admin-stream-form studio-websocket-form">
+        <div class="studio-profile-heading"><div><h4>Enlace OBS WebSocket</h4><p>Para el túnel seguro de la VM, usa el puerto 4458. No lo expongas directamente a Internet.</p></div></div>
+        <label>Host o endpoint del túnel<input name="host" value="${escapeHtml(state.obs?.host || 'host.docker.internal')}" maxlength="253" required /></label>
+        <label>Puerto<input name="port" type="number" min="1" max="65535" value="${Number(state.obs?.port || 4458)}" required /></label>
+        <label class="wide">Contraseña WebSocket<input name="password" type="password" autocomplete="new-password" placeholder="Vacío para reutilizar la contraseña guardada" /></label>
+        <button class="button secondary wide" id="admin-stream-connect" type="submit">Conectar y vincular OBS</button>
+        <p class="form-message wide">La contraseña se cifra en el servidor. Si ya está guardada, deja el campo vacío para conservarla.</p>
+      </form>` : '<p class="studio-manual-note">Esta aplicación no está conectada a una API de control de terceros: usa el servidor RTMP y la clave mostrados arriba en sus ajustes de emisión. La retransmisión a los destinos seleccionados la realiza este servidor.</p>'}
+    </article>`;
+  }).join('');
+}
 function renderAdminStream() {
   if (!adminStreamState) return;
   const state = adminStreamState;
   const obs = state.obs || {};
   const live = Boolean(state.live);
   const isObsStreaming = Boolean(obs.streaming);
-  $('#admin-stream-live-status').textContent = live ? 'EN VIVO' : isObsStreaming ? 'OBS TRANSMITIENDO' : 'ESPERANDO SEÑAL';
+  $('#admin-stream-live-status').textContent = live ? 'EN VIVO' : 'ESPERANDO SEÑAL';
   $('#admin-stream-live-status').classList.toggle('is-live', live);
   $('#admin-stream-live-detail').textContent = live
     ? `La señal está disponible en la página de usuarios desde ${formatDate(state.liveSince)}.`
-    : isObsStreaming ? 'OBS está transmitiendo; esperando que MediaMTX reciba la señal.'
-      : obs.connected ? 'OBS conectado. Inicia la transmisión para publicar en la página y en las plataformas configuradas.'
-        : 'Conecta OBS y configura al menos una plataforma para iniciar la transmisión.';
+    : 'Inicia la emisión desde el control principal para publicarla en la página de usuarios.';
   const toggle = $('#admin-stream-toggle');
-  toggle.textContent = isObsStreaming ? 'Detener transmisión' : 'Iniciar transmisión';
+  toggle.textContent = isObsStreaming ? 'Detener emisión' : 'Iniciar emisión';
   toggle.disabled = !obs.connected || (Boolean(state.videoBroadcast?.status === 'programada' || state.videoBroadcast?.status === 'en vivo') && !isObsStreaming);
-  $('#admin-stream-ingest-server').textContent = state.ingest?.server || 'No disponible';
-  $('#admin-stream-ingest-key').textContent = revealAdminIngestKey ? (state.ingest?.key || 'No disponible') : '••••••••••••••••••••••••';
-  $('#admin-stream-reveal-key').textContent = revealAdminIngestKey ? 'Ocultar' : 'Mostrar';
-  if (!adminObsFormEdited && obs.configured) {
-    $('#admin-stream-obs-form').elements.host.value = obs.host || 'host.docker.internal';
-    $('#admin-stream-obs-form').elements.port.value = String(obs.port || 4455);
-  }
   const destinations = state.destinations || [];
   $('#admin-stream-destination-count').textContent = `${destinations.length} ${destinations.length === 1 ? 'destino' : 'destinos'}`;
   $('#admin-stream-destination-list').innerHTML = destinations.length ? destinations.map(destination => {
@@ -290,33 +351,115 @@ function renderAdminStream() {
     const status = live ? outputLabels[destination.outputStatus] || 'Esperando salida' : 'Listo';
     return `<div class="admin-stream-destination"><span><b>${escapeHtml(destination.name)}</b><small>${escapeHtml(destination.platform)} · ${escapeHtml(status)}</small></span><button class="remove-destination" type="button" data-admin-stream-remove="${escapeHtml(destination.id)}" aria-label="Quitar ${escapeHtml(destination.name)}">×</button></div>`;
   }).join('') : '<p class="form-message">Agrega una plataforma para retransmitir la señal.</p>';
+  renderStudioProfiles();
+  if (!adminObsFormEdited && obs.configured && $('#admin-stream-obs-form')) {
+    $('#admin-stream-obs-form').elements.host.value = obs.host || 'host.docker.internal';
+    $('#admin-stream-obs-form').elements.port.value = String(obs.port || 4458);
+  }
 }
 async function loadAdminStream() {
   if (adminStreamBusy || document.hidden || $('#admin-shell').hidden) return;
   adminStreamBusy = true;
   try {
     adminStreamState = await api('/api/admin/stream');
+    if (adminStreamState.obs?.connected) {
+      try { adminStreamState.obsProduction = await api('/api/obs/production'); }
+      catch (error) { adminStreamState.obsProduction = { scenes: [], error: error.message }; }
+    }
     renderAdminStream();
   } catch (error) {
     $('#admin-stream-live-status').textContent = 'SIN ACTUALIZACIÓN';
     $('#admin-stream-live-detail').textContent = `No se pudo consultar la transmisión: ${error.message}`;
   } finally { adminStreamBusy = false; }
 }
-$('#admin-stream-obs-form').addEventListener('input', () => { adminObsFormEdited = true; });
-$('#admin-stream-obs-form').addEventListener('submit', async event => {
+$('.studio-software-tabs').addEventListener('click', event => {
+  const tab = event.target.closest('[data-studio-tab]');
+  if (!tab) return;
+  activeStudioTab = tab.dataset.studioTab;
+  $$('[data-studio-tab]').forEach(button => button.setAttribute('aria-selected', String(button === tab)));
+  $$('[data-studio-panel]').forEach(panel => {
+    const active = panel.dataset.studioPanel === activeStudioTab;
+    panel.hidden = !active;
+    panel.classList.toggle('active', active);
+  });
+});
+$('#studio-profile-panels').addEventListener('submit', async event => {
+  const form = event.target.closest('[data-studio-profile-form]');
+  if (!form) return;
   event.preventDefault();
-  const form = event.currentTarget;
+  const software = form.dataset.studioProfileForm;
+  const button = form.querySelector('button[type="submit"]');
+  const profile = {
+    source: form.elements.source.value,
+    resolution: form.elements.resolution.value,
+    aspectRatio: form.elements.aspectRatio.value,
+    sceneName: form.elements.sceneName?.value || '',
+    destinationIds: [...form.querySelectorAll('input[name="destinationIds"]:checked')].map(input => input.value)
+  };
+  button.disabled = true;
+  studioProfileFeedback[software] = { text: 'Guardando perfil y actualizando las salidas…' };
+  try {
+    adminStreamState = { ...adminStreamState, ...await api('/api/admin/studio-profiles', { method: 'PUT', body: JSON.stringify({ software, profile }) }) };
+    studioProfileFeedback[software] = { text: 'Perfil guardado y activado. Las salidas seleccionadas se retransmitirán al recibir la señal.', success: true };
+    renderAdminStream();
+  } catch (error) {
+    studioProfileFeedback[software] = { text: error.message, error: true };
+    form.querySelector(`[data-profile-feedback="${software}"]`).textContent = error.message;
+    form.querySelector(`[data-profile-feedback="${software}"]`).classList.add('error');
+  } finally { button.disabled = false; }
+});
+$('#studio-profile-panels').addEventListener('click', async event => {
+  const applyFormatButton = event.target.closest('[data-apply-obs-format]');
+  if (applyFormatButton) {
+    const form = applyFormatButton.closest('[data-studio-profile-form]');
+    const profile = `${form.elements.aspectRatio.value === '16:9' ? 'landscape' : 'portrait'}-${form.elements.resolution.value}`;
+    applyFormatButton.disabled = true;
+    try {
+      await api('/api/obs/video-settings', { method: 'PUT', body: JSON.stringify({ profile, fps: 30 }) });
+      studioProfileFeedback.obs = { text: 'Resolución y aspecto aplicados en OBS.', success: true };
+    } catch (error) { studioProfileFeedback.obs = { text: error.message, error: true }; }
+    renderStudioProfiles();
+    return;
+  }
+  const revealButton = event.target.closest('[data-profile-key-reveal]');
+  if (revealButton) {
+    const software = revealButton.dataset.profileKeyReveal;
+    if (visibleStudioKeys.has(software)) visibleStudioKeys.delete(software);
+    else visibleStudioKeys.add(software);
+    renderStudioProfiles();
+    return;
+  }
+  const copyButton = event.target.closest('[data-profile-key-copy]');
+  if (!copyButton) return;
+  try {
+    await navigator.clipboard.writeText(`Servidor: ${adminStreamState?.ingest?.server || ''}\nClave: ${adminStreamState?.ingest?.key || ''}`);
+    studioProfileFeedback[copyButton.dataset.profileKeyCopy] = { text: 'Datos RTMP copiados. Mantén la clave privada.', success: true };
+    renderStudioProfiles();
+  } catch (error) {
+    studioProfileFeedback[copyButton.dataset.profileKeyCopy] = { text: `No se pudieron copiar los datos RTMP: ${error.message}`, error: true };
+    renderStudioProfiles();
+  }
+});
+document.addEventListener('input', event => {
+  if (event.target.closest('#admin-stream-obs-form')) adminObsFormEdited = true;
+});
+document.addEventListener('submit', async event => {
+  if (event.target.id !== 'admin-stream-obs-form') return;
+  event.preventDefault();
+  const form = event.target;
   const button = $('#admin-stream-connect');
   button.disabled = true;
   $('#admin-stream-feedback').textContent = 'Conectando con OBS…';
   try {
-    adminStreamState = await api('/api/obs/connect', { method: 'POST', body: JSON.stringify({
+    adminStreamState = { ...adminStreamState, ...await api('/api/obs/connect', { method: 'POST', body: JSON.stringify({
       host: form.elements.host.value.trim(),
       port: Number(form.elements.port.value),
       password: form.elements.password.value
-    }) });
+    }) }) };
     form.elements.password.value = '';
     adminObsFormEdited = false;
+    try { adminStreamState.obsProduction = await api('/api/obs/production'); }
+    catch (error) { adminStreamState.obsProduction = { scenes: [], error: error.message }; }
     renderAdminStream();
     $('#admin-stream-feedback').textContent = 'OBS conectado y configurado para publicar en INETER en vivo.';
     $('#admin-stream-feedback').classList.remove('error');
@@ -331,7 +474,7 @@ $('#admin-stream-toggle').addEventListener('click', async event => {
   $('#admin-stream-feedback').textContent = '';
   try {
     const action = adminStreamState?.obs?.streaming ? 'stop' : 'start';
-    adminStreamState = await api('/api/obs/stream', { method: 'POST', body: JSON.stringify({ action }) });
+    adminStreamState = { ...adminStreamState, ...await api('/api/obs/stream', { method: 'POST', body: JSON.stringify({ action }) }) };
     renderAdminStream();
     $('#admin-stream-feedback').textContent = action === 'start' ? 'OBS inició. La página de usuarios se actualizará al recibir la señal.' : 'La transmisión de OBS se detuvo.';
     $('#admin-stream-feedback').classList.remove('error');
@@ -347,12 +490,12 @@ $('#admin-stream-destination-form').addEventListener('submit', async event => {
   const button = $('#admin-stream-add-destination');
   button.disabled = true;
   try {
-    adminStreamState = await api('/api/destinations', { method: 'POST', body: JSON.stringify({
+    adminStreamState = { ...adminStreamState, ...await api('/api/destinations', { method: 'POST', body: JSON.stringify({
       platform: form.elements.platform.value,
       name: form.elements.name.value.trim(),
       serverUrl: form.elements.serverUrl.value.trim(),
       key: form.elements.key.value
-    }) });
+    }) }) };
     form.reset();
     renderAdminStream();
     $('#admin-stream-feedback').textContent = 'Plataforma guardada. Su clave quedó cifrada en el servidor.';
@@ -372,24 +515,12 @@ $('#admin-stream-destination-list').addEventListener('click', async event => {
   if (!button) return;
   button.disabled = true;
   try {
-    adminStreamState = await api(`/api/destinations/${encodeURIComponent(button.dataset.adminStreamRemove)}`, { method: 'DELETE' });
+    adminStreamState = { ...adminStreamState, ...await api(`/api/destinations/${encodeURIComponent(button.dataset.adminStreamRemove)}`, { method: 'DELETE' }) };
     renderAdminStream();
   } catch (error) {
     $('#admin-stream-feedback').textContent = error.message;
     $('#admin-stream-feedback').classList.add('error');
     button.disabled = false;
-  }
-});
-$('#admin-stream-reveal-key').addEventListener('click', () => { revealAdminIngestKey = !revealAdminIngestKey; renderAdminStream(); });
-$('#admin-stream-copy-ingest').addEventListener('click', async () => {
-  if (!adminStreamState?.ingest) return;
-  try {
-    await navigator.clipboard.writeText(`Servidor: ${adminStreamState.ingest.server}\nClave: ${adminStreamState.ingest.key}`);
-    $('#admin-stream-feedback').textContent = 'Servidor y clave de OBS copiados.';
-    $('#admin-stream-feedback').classList.remove('error');
-  } catch (error) {
-    $('#admin-stream-feedback').textContent = `No se pudieron copiar los datos: ${error.message}`;
-    $('#admin-stream-feedback').classList.add('error');
   }
 });
 async function loadUsers() {  const body = $('#users-table');
@@ -463,19 +594,47 @@ $('#create-monitor-admin-form').addEventListener('submit', async event => {
 });
 
 async function loadAlerts() {
+  clearTimeout(alertRefreshTimer);
+  alertRefreshTimer = null;
   const list = $('#alert-list');
   list.textContent = 'Consultando avisos…';
   try {
     const data = await api('/api/admin/alerts');
     $('#recipient-count').textContent = `Destinatarios: ${data.registeredCount ?? 0}`;
     const mailSetup = data.mail?.ready
-      ? `Correo listo · ${escapeHtml(data.mail.sender)}`
-      : 'Correo sin configurar · define ALERT_FROM_EMAIL y RESEND_API_KEY en .env';
+      ? `Correo listo · ${escapeHtml(data.mail.sender)}${data.mail.usingDefaultSender ? ' (remitente predeterminado)' : ''}`
+      : 'Correo sin configurar · falta RESEND_API_KEY; ALERT_FROM_EMAIL es opcional.';
     $('#stat-alerts').textContent = (data.alerts || []).length;
-    list.innerHTML = `<small>${mailSetup}</small>` + (data.alerts?.length ? data.alerts.map(alert => `<article class="record-item"><div><h3>${escapeHtml(alert.title)}</h3><p>${escapeHtml(alert.categoryLabel || alert.category)} · ${escapeHtml(alert.severityLabel || alert.severity)} · ${escapeHtml(alert.location || 'Sin zona')}</p><p>${escapeHtml(alert.message)}</p><small>${escapeHtml(formatDate(alert.createdAt))} · correo: ${escapeHtml(alert.emailStatus || 'pendiente')} (${Number(alert.emailAccepted || 0)}/${Number(alert.recipientCount || 0)}) · notificaciones: ${escapeHtml(alert.firebaseStatus || 'pendiente')}${alert.emailError ? ` · ${escapeHtml(alert.emailError)}` : ''}</small></div>${['fallido', 'parcial', 'sin_configuracion', 'sin_destinatarios'].includes(alert.emailStatus) ? `<div class="record-actions"><button data-retry-alert="${escapeHtml(alert.id)}">Reintentar correo</button></div>` : ''}</article>`).join('') : '<p>No hay avisos publicados.</p>');
+    const alerts = [...new Map((data.alerts || []).filter(alert => alert?.id).map(alert => [alert.id, alert])).values()];
+    list.innerHTML = `<small>${mailSetup}</small>` + (alerts.length ? alerts.map(alert => `<article class="record-item"><div><h3>${escapeHtml(alert.title)}</h3><p>${escapeHtml(alert.categoryLabel || alert.category)} · ${escapeHtml(alert.severityLabel || alert.severity)} · ${escapeHtml(alert.location || 'Sin zona')}</p><p>${escapeHtml(alert.message)}</p><small>${escapeHtml(formatDate(alert.createdAt))} · correo: ${escapeHtml(alert.emailStatus || 'pendiente')} (${Number(alert.emailAccepted || 0)}/${Number(alert.recipientCount || 0)}) · notificaciones: ${escapeHtml(alert.firebaseStatus || 'pendiente')}${alert.emailError ? ` · ${escapeHtml(alert.emailError)}` : ''}</small></div>${['fallido', 'parcial', 'sin_configuracion', 'sin_destinatarios'].includes(alert.emailStatus) ? `<div class="record-actions"><button data-retry-alert="${escapeHtml(alert.id)}">Reintentar correo</button></div>` : ''}</article>`).join('') : '<p>No hay avisos publicados.</p>');
+    if (alerts.some(alert => ['en_cola', 'enviando'].includes(alert.emailStatus)) && !document.hidden) {
+      alertRefreshTimer = setTimeout(loadAlerts, 2500);
+    }
   } catch (error) { list.textContent = error.message; }
 }
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadAlerts();
+});
 $('#refresh-alerts').addEventListener('click', loadAlerts);
+$('#clear-alerts').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const feedback = $('#clear-alerts-feedback');
+  if (!confirm('¿Limpiar el registro completo de alertas? Esta acción no se puede deshacer.')) return;
+  button.disabled = true;
+  feedback.className = 'form-message';
+  feedback.textContent = 'Limpiando el registro…';
+  try {
+    const result = await api('/api/admin/alerts', { method: 'DELETE' });
+    await loadAlerts();
+    feedback.classList.add('success');
+    feedback.textContent = result.removedCount
+      ? `Se eliminaron ${result.removedCount} alertas del historial.`
+      : 'El historial ya estaba vacío.';
+  } catch (error) {
+    feedback.classList.add('error');
+    feedback.textContent = error.message;
+  } finally { button.disabled = false; }
+});
 $('#alert-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-retry-alert]'); if (!button) return;
   button.disabled = true;
@@ -491,8 +650,8 @@ $('#alert-form').addEventListener('submit', async event => {
   try {
     const result = await api('/api/admin/alerts', { method: 'POST', body: JSON.stringify(data) });
     message.classList.add('success'); message.textContent = (result.mailConfigured
-      ? `Aviso publicado en la página de usuarios. Encolado para ${result.recipientCount || 0} cuentas registradas; revisa el historial para ver el resultado del proveedor de correo.`
-      : `Aviso publicado en la página de usuarios, pero no se enviará por correo hasta configurar RESEND_API_KEY y ALERT_FROM_EMAIL. Cuentas destinatarias: ${result.recipientCount || 0}.`)
+      ? `Aviso publicado en la página de usuarios. Encolado para ${result.recipientCount || 0} cuentas registradas; el historial se actualizará al terminar el envío.`
+      : `Aviso publicado en la página de usuarios, pero no se enviará por correo hasta configurar RESEND_API_KEY. ALERT_FROM_EMAIL es opcional. Cuentas destinatarias: ${result.recipientCount || 0}.`)
       + (result.directorySyncError ? ` No se pudo actualizar el directorio de Firebase: ${result.directorySyncError}` : '');
     form.reset(); form.elements.sourceName.value = 'INETER'; await loadAlerts();
   } catch (error) { message.classList.add('error'); message.textContent = error.message; }
@@ -521,6 +680,13 @@ $('#request-list').addEventListener('click', async event => {
 
 let adminVideosCache = [];
 let adminVideoBroadcast = null;
+const adminVideoCategories = {
+  registro_historico: 'Registro Histórico',
+  capacitacion: 'Material de Capacitación',
+  educativo: 'Material Educativo',
+  streamings_finalizados: 'Streamings Finalizados',
+  fenomenos_meteorologicos: 'Explicación de Fenómenos Meteorológicos'
+};
 function renderAdminVideos() {
   const list = $('#admin-video-list');
   const selectedDelays = new Map($$('[data-video-delay]', list).map(select => [select.dataset.videoDelay, select.value]));
@@ -546,7 +712,8 @@ function renderAdminVideos() {
     const action = ownsBroadcast
       ? `<button class="button secondary" type="button" data-video-broadcast="stop" data-video-id="${escapeHtml(video.id)}">Detener video</button>`
       : `<label class="video-delay-label">Iniciar en<select data-video-delay="${escapeHtml(video.id)}" ${active ? 'disabled' : ''}><option value="0">Ahora</option><option value="30">30 segundos</option><option value="60">1 minuto</option><option value="120">2 minutos</option><option value="300">5 minutos</option><option value="600">10 minutos</option></select></label><button class="button primary" type="button" data-video-broadcast="start" data-video-id="${escapeHtml(video.id)}" ${active ? 'disabled' : ''}>Transmitir</button>`;
-    return `<article class="admin-video-card"><div class="admin-video-poster">${preview}</div><div class="admin-video-info"><h4>${escapeHtml(video.title)}</h4><small>${escapeHtml(formatDate(video.createdAt))} · ${formatBytes(video.size)}${video.subtitlesUrl ? ' · Subtítulos' : ''}</small><div class="admin-video-assets"><label>Miniatura<input type="file" accept="image/jpeg,image/png,image/webp" data-video-asset="thumbnail" data-video-id="${escapeHtml(video.id)}" /></label><label>Subtítulos WebVTT<input type="file" accept=".vtt,text/vtt" data-video-asset="subtitles" data-video-id="${escapeHtml(video.id)}" /></label></div><div class="admin-video-controls">${action}</div></div></article>`;
+    const categoryOptions = Object.entries(adminVideoCategories).map(([category, label]) => `<option value="${category}" ${video.category === category ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+    return `<article class="admin-video-card"><div class="admin-video-poster">${preview}</div><div class="admin-video-info"><h4>${escapeHtml(video.title)}</h4><small>${escapeHtml(formatDate(video.createdAt))} · ${formatBytes(video.size)}${video.subtitlesUrl ? ' · Subtítulos' : ''}</small><div class="admin-video-assets"><label>Categoría<select data-video-category="${escapeHtml(video.id)}">${categoryOptions}</select></label><label>Miniatura<input type="file" accept="image/jpeg,image/png,image/webp" data-video-asset="thumbnail" data-video-id="${escapeHtml(video.id)}" /></label><label>Subtítulos WebVTT<input type="file" accept=".vtt,text/vtt" data-video-asset="subtitles" data-video-id="${escapeHtml(video.id)}" /></label></div><div class="admin-video-controls">${action}</div></div></article>`;
   }).join('') : '<p class="empty-admin-videos">Aún no hay videos en la biblioteca. Sube un MP4 para empezar.</p>';
   $$('[data-video-delay]', list).forEach(select => {
     if (selectedDelays.has(select.dataset.videoDelay)) select.value = selectedDelays.get(select.dataset.videoDelay);
@@ -598,7 +765,8 @@ $('#video-form').addEventListener('submit', async event => {
   button.disabled = true; progress.hidden = false; progress.value = 0; message.textContent = 'Subiendo video…';
   try {
     const data = await uploadAdminBinary('/api/admin/videos', file, 'video/mp4', {
-      'x-video-title': encodeURIComponent(form.elements.title.value.trim())
+      'x-video-title': encodeURIComponent(form.elements.title.value.trim()),
+      'x-video-category': form.elements.category.value
     }, value => { progress.value = Math.round(value * 80); });
     const video = data.video;
     if (thumbnail) {
@@ -646,6 +814,21 @@ $('#admin-video-list').addEventListener('click', async event => {
   }
 });
 $('#admin-video-list').addEventListener('change', async event => {
+  const categorySelect = event.target.closest('[data-video-category]');
+  if (categorySelect) {
+    categorySelect.disabled = true;
+    try {
+      await api(`/api/admin/videos/${encodeURIComponent(categorySelect.dataset.videoCategory)}/category`, {
+        method: 'PUT',
+        body: JSON.stringify({ category: categorySelect.value })
+      });
+      await loadAdminVideos();
+    } catch (error) {
+      setError(error.message);
+      categorySelect.disabled = false;
+    }
+    return;
+  }
   const input = event.target.closest('[data-video-asset]');
   const file = input?.files?.[0];
   if (!input || !file) return;

@@ -59,6 +59,20 @@ if (!Array.isArray(state.pushTokens)) state.pushTokens = [];
 if (!state.likes || typeof state.likes !== 'object') state.likes = {};
 if (!Array.isArray(state.likesLog)) state.likesLog = [];
 if (!state.authSessions || typeof state.authSessions !== 'object') state.authSessions = {};
+const studioSoftwareIds = ['obs', 'streamyard', 'streamlabs', 'prism'];
+const studioProfileDefaults = Object.fromEntries(studioSoftwareIds.map(id => [id, {
+  source: 'camera',
+  resolution: '1080p',
+  aspectRatio: '16:9',
+  sceneName: '',
+  destinationIds: null
+}]));
+if (!state.studioProfiles || typeof state.studioProfiles !== 'object' || Array.isArray(state.studioProfiles)) state.studioProfiles = {};
+for (const software of studioSoftwareIds) {
+  const profile = state.studioProfiles[software];
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) state.studioProfiles[software] = { ...studioProfileDefaults[software] };
+}
+if (!studioSoftwareIds.includes(state.activeStudioProfile)) state.activeStudioProfile = 'obs';
 let firebaseAdmin = null;
 let firebaseAdminError = '';
 const firebasePublicDefaults = {
@@ -155,8 +169,10 @@ const MAX_LIVE_DURATION_MS = 3.5 * 60 * 60 * 1000;
 const MAX_LIVE_DURATION_SECONDS = Math.floor(MAX_LIVE_DURATION_MS / 1000);
 const LIVE_RECONNECT_GRACE_MS = 15_000;
 const obsVideoProfiles = {
+  'landscape-sd': { baseWidth: 640, baseHeight: 360, outputWidth: 640, outputHeight: 360 },
   'landscape-1080': { baseWidth: 1920, baseHeight: 1080, outputWidth: 1920, outputHeight: 1080 },
   'landscape-720': { baseWidth: 1280, baseHeight: 720, outputWidth: 1280, outputHeight: 720 },
+  'portrait-sd': { baseWidth: 360, baseHeight: 640, outputWidth: 360, outputHeight: 640 },
   'portrait-1080': { baseWidth: 1080, baseHeight: 1920, outputWidth: 1080, outputHeight: 1920 },
   'portrait-720': { baseWidth: 720, baseHeight: 1280, outputWidth: 720, outputHeight: 1280 },
   'square-1080': { baseWidth: 1080, baseHeight: 1080, outputWidth: 1080, outputHeight: 1080 },
@@ -328,7 +344,7 @@ function connectObs() {
   if (obsConnectPromise) return obsConnectPromise;
   if (!state.obs?.secret) return Promise.reject(new Error('Primero guarda la contraseña de OBS WebSocket.'));
   const host = state.obs.host || process.env.OBS_WS_HOST || '127.0.0.1';
-  const port = Number(state.obs.port || 4455);
+  const port = Number(state.obs.port || 4458);
   const password = decrypt(state.obs.secret);
   obsConnectPromise = new Promise((resolve, reject) => {
     let settled = false;
@@ -408,7 +424,7 @@ async function obsRequest(requestType, requestData = {}) {
   });
 }
 async function obsStatus() {
-  if (!state.obs?.secret) return { configured: false, connected: false, streaming: false, host: state.obs?.host || 'host.docker.internal', port: Number(state.obs?.port || 4455), error: '' };
+  if (!state.obs?.secret) return { configured: false, connected: false, streaming: false, host: state.obs?.host || 'host.docker.internal', port: Number(state.obs?.port || 4458), error: '' };
   try {
     const status = await obsRequest('GetStreamStatus');
     obsStreaming = !!status.outputActive;
@@ -476,7 +492,13 @@ function firebaseTokenVerificationError(error) {
   return `Firebase no pudo validar la sesión (${code}): ${detail}`;
 }
 function alertMailStatus() {
-  return { ready: !!(process.env.RESEND_API_KEY && process.env.ALERT_FROM_EMAIL), provider: 'Resend', sender: process.env.ALERT_FROM_EMAIL || '' };
+  const configuredSender = String(process.env.ALERT_FROM_EMAIL || '').trim();
+  return {
+    ready: !!String(process.env.RESEND_API_KEY || '').trim(),
+    provider: 'Resend',
+    sender: configuredSender || 'onboarding@resend.dev',
+    usingDefaultSender: !configuredSender
+  };
 }
 function alertEmailRecipients(firebaseAccounts = null) {
   const currentlyRegistered = firebaseAccounts ? new Set(firebaseAccounts.filter(account => !account.disabled).map(account => String(account.email || '').trim().toLowerCase())) : null;
@@ -516,7 +538,7 @@ async function sendAlertBroadcast(alertId) {
   const config = alertMailStatus();
   if (!config.ready) {
     alert.emailStatus = 'sin_configuracion';
-    alert.emailError = 'Configura RESEND_API_KEY y ALERT_FROM_EMAIL en .env.';
+    alert.emailError = 'No se enviaron correos: falta RESEND_API_KEY en .env. El aviso sí está publicado en la plataforma.';
     saveState();
     return;
   }
@@ -538,7 +560,7 @@ async function sendAlertBroadcast(alertId) {
   try {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const payload = batches[batchIndex].map(email => ({
-        from: process.env.ALERT_FROM_EMAIL,
+        from: config.sender,
         to: [email],
         subject,
         text: `${alert.categoryLabel} · ${alert.severityLabel}\n${alert.title}\nZona: ${alert.location || 'Nicaragua'}\n\n${alert.message}\n\nFuente oficial: ${alert.sourceName || alert.sourceUrl} ${alert.sourceUrl}\n\nVerifica siempre las instrucciones de las autoridades competentes.`,
@@ -553,6 +575,9 @@ async function sendAlertBroadcast(alertId) {
       if (!response.ok) {
         let reason = `Proveedor de correo respondió HTTP ${response.status}.`;
         try { const body = await response.json(); if (body.message) reason = String(body.message).slice(0, 240); } catch {}
+        if (response.status === 401) reason = 'Resend rechazó RESEND_API_KEY. Comprueba que la clave sea válida y esté activa.';
+        else if (response.status === 403 || response.status === 422) reason = `Resend rechazó el remitente "${config.sender}" o los datos del mensaje: ${reason}`;
+        else if (response.status === 429) reason = `Resend limitó temporalmente los envíos: ${reason}`;
         throw new Error(reason);
       }
       const result = await response.json();
@@ -562,7 +587,11 @@ async function sendAlertBroadcast(alertId) {
     alert.emailStatus = 'aceptado';
   } catch (error) {
     alert.emailStatus = alert.emailAccepted ? 'parcial' : 'fallido';
-    alert.emailError = String(error.message || 'Error enviando correos.').slice(0, 300);
+    alert.emailError = error.name === 'TimeoutError' || error.name === 'AbortError'
+      ? 'Resend tardó demasiado en responder. Revisa la conexión y vuelve a intentar el envío.'
+      : error instanceof TypeError
+        ? 'No se pudo conectar con Resend. Comprueba la conexión del servidor y vuelve a intentar.'
+      : String(error.message || 'No se pudo enviar el correo mediante Resend.').slice(0, 300);
   }
   alert.emailSentAt = new Date().toISOString();
   saveState();
@@ -597,7 +626,8 @@ function publicState() {
     videoBroadcast: publicVideoBroadcast(),
     alerts: state.alerts.slice(-20).reverse().map(publicAlert),
     streamStats: streamStatsSnapshot(),
-    obs: { configured: !!state.obs?.secret, connected: obsConnected, streaming: obsStreaming, host: state.obs?.host || process.env.OBS_WS_HOST || '127.0.0.1', port: Number(state.obs?.port || 4455), error: obsError }
+    obs: { configured: !!state.obs?.secret, connected: obsConnected, streaming: obsStreaming, host: state.obs?.host || process.env.OBS_WS_HOST || '127.0.0.1', port: Number(state.obs?.port || 4458), error: obsError },
+    activeStudioProfile: state.activeStudioProfile
   };
 }
 function streamStatsSnapshot() {
@@ -955,7 +985,7 @@ async function startVideoBroadcast(broadcast) {
     if (!video) throw new Error('El video ya no está disponible.');
     const inputPath = path.resolve(recordingsDir, ...video.name.split('/'));
     if (!inputPath.startsWith(recordingsDir + path.sep) || !fs.existsSync(inputPath)) throw new Error('No se encontró el archivo de video.');
-    for (const destination of state.destinations) {
+    for (const destination of activeStreamDestinations()) {
       if (!validRtmp(destination.serverUrl)) throw new Error(`La URL de ${destination.name} no es RTMP válida.`);
       const key = decrypt(destination.secret).trim();
       if (!key) throw new Error(`Falta la clave de transmisión de ${destination.name}.`);
@@ -1040,18 +1070,34 @@ function validRtmp(value) {
   try { const url = new URL(value); return ['rtmp:', 'rtmps:'].includes(url.protocol) && !!url.hostname; }
   catch { return false; }
 }
+function activeStreamDestinations() {
+  const destinationIds = state.studioProfiles?.[state.activeStudioProfile]?.destinationIds;
+  return Array.isArray(destinationIds)
+    ? state.destinations.filter(destination => destinationIds.includes(destination.id))
+    : state.destinations;
+}
 function startRelay() {
   if (!activeSession) {
-    activeSession = { id: crypto.randomUUID(), startedAt: new Date().toISOString(), recording: 'MediaMTX', destinations: state.destinations.map(d => d.name), status: 'grabando' };
+    activeSession = { id: crypto.randomUUID(), startedAt: new Date().toISOString(), recording: 'MediaMTX', destinations: activeStreamDestinations().map(d => d.name), status: 'grabando' };
     peakStreamViewers = 0;
     state.sessions.push(activeSession); saveState();
   }
   const source = `${process.env.MEDIAMTX_RTSP_BASE || 'rtsp://127.0.0.1:8554'}/live/${ingestToken}`;
   const base = ['-hide_banner', '-loglevel', 'warning', '-rtsp_transport', 'tcp', '-i', source];
+  const destinations = activeStreamDestinations();
+  const destinationIds = new Set(destinations.map(destination => destination.id));
+  for (const job of ffmpegJobs) {
+    if (job.destinationId && !destinationIds.has(job.destinationId) && !job.killed) job.kill('SIGINT');
+  }
+  const destinationNames = destinations.map(destination => destination.name);
+  if (JSON.stringify(activeSession.destinations) !== JSON.stringify(destinationNames)) {
+    activeSession.destinations = destinationNames;
+    saveState();
+  }
   const activeDestinationIds = new Set(ffmpegJobs
     .filter(job => !job.killed && job.exitCode === null && job.signalCode === null)
     .map(job => job.destinationId));
-  for (const destination of state.destinations) {
+  for (const destination of destinations) {
     if (activeDestinationIds.has(destination.id)) continue;
     try {
       const key = decrypt(destination.secret);
@@ -1412,7 +1458,44 @@ async function handleHttpRequest(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/stream') {
       if (!currentAdminProfessional(req)) return json(res, 403, { error: 'Solo la cuenta administradora principal puede controlar la transmisión.' });
-      return json(res, 200, publicState());
+      return json(res, 200, { ...publicState(), studioProfiles: state.studioProfiles });
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/admin/studio-profiles') {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const body = await readBody(req).catch(() => null);
+      const software = String(body?.software || '');
+      const profile = body?.profile;
+      const sources = new Set(['camera', 'screen', 'capture', 'mixed']);
+      const resolutions = new Set(['sd', '720p', '1080p']);
+      const aspectRatios = new Set(['16:9', '9:16']);
+      const sceneName = typeof profile?.sceneName === 'string' ? profile.sceneName.trim() : '';
+      if (!studioSoftwareIds.includes(software) || !profile || typeof profile !== 'object'
+        || !sources.has(profile.source) || !resolutions.has(profile.resolution) || !aspectRatios.has(profile.aspectRatio)
+        || !Array.isArray(profile.destinationIds) || profile.destinationIds.length > Math.max(50, state.destinations.length)
+        || (Object.hasOwn(profile, 'sceneName') && typeof profile.sceneName !== 'string')
+        || (software !== 'obs' && sceneName) || sceneName.length > 100) {
+        return json(res, 400, { error: 'El perfil del estudio contiene opciones no válidas.' });
+      }
+      const destinationIds = [...new Set(profile.destinationIds.map(value => String(value)))];
+      if (destinationIds.some(id => !state.destinations.some(destination => destination.id === id))) {
+        return json(res, 400, { error: 'El perfil incluye un destino RTMP que ya no está configurado.' });
+      }
+      if (software === 'obs' && sceneName && obsConnected) {
+        const sceneList = await obsRequest('GetSceneList');
+        if (!(sceneList.scenes || []).some(scene => scene.sceneName === sceneName)) return json(res, 404, { error: 'La escena seleccionada ya no existe en OBS. Actualiza la lista.' });
+        await obsRequest('SetCurrentProgramScene', { sceneName });
+      }
+      state.studioProfiles[software] = {
+        source: profile.source,
+        resolution: profile.resolution,
+        aspectRatio: profile.aspectRatio,
+        sceneName,
+        destinationIds
+      };
+      state.activeStudioProfile = software;
+      saveState();
+      if (livePublisherReady) startRelay();
+      return json(res, 200, { ...publicState(), studioProfiles: state.studioProfiles });
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/monitor') {
       const mainAdmin = currentProfessional(req);
@@ -1453,6 +1536,13 @@ async function handleHttpRequest(req, res) {
     }
     if (req.method === 'POST' && url.pathname === '/api/admin/bootstrap') {
       return json(res, 410, { error: 'La asignación inicial ahora se realiza únicamente para el correo autorizado y verificado en Firebase.' });
+    }
+    if (req.method === 'DELETE' && url.pathname === '/api/admin/alerts') {
+      if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
+      const removedCount = state.alerts.length;
+      state.alerts = [];
+      saveState();
+      return json(res, 200, { cleared: true, removedCount });
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/alerts') {
       if (currentAdminProfessional(req)?.role !== 'admin') return json(res, 403, { error: 'Se requiere una cuenta administradora.' });
@@ -1983,7 +2073,7 @@ async function handleHttpRequest(req, res) {
     if (req.method === 'POST' && url.pathname === '/api/obs/connect') {
       const body = await readBody(req).catch(() => null);
       const host = String(body?.host || 'host.docker.internal').trim();
-      const port = Number(body?.port || 4455);
+      const port = Number(body?.port || 4458);
       if (!/^[a-zA-Z0-9.\-]+$/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) return json(res, 400, { error: 'Host o puerto de OBS no válido.' });
       const previousObs = state.obs;
       const submittedPassword = typeof body?.password === 'string' ? body.password : '';
@@ -2076,7 +2166,7 @@ async function handleHttpRequest(req, res) {
       if (!title || !Number.isFinite(startTime) || startTime < Date.now() + 10_000 || (duration !== null && (!Number.isInteger(duration) || duration < 1 || duration > 720))) {
         return json(res, 400, { error: 'Indica un nombre, una fecha futura y una duración entre 1 y 720 minutos (o déjala vacía).' });
       }
-      const schedule = { id: crypto.randomUUID(), title, startsAt: new Date(startTime).toISOString(), durationMinutes: duration, destinations: state.destinations.map(d => d.name), status: 'programada', createdAt: new Date().toISOString() };
+      const schedule = { id: crypto.randomUUID(), title, startsAt: new Date(startTime).toISOString(), durationMinutes: duration, destinations: activeStreamDestinations().map(d => d.name), status: 'programada', createdAt: new Date().toISOString() };
       state.schedules.push(schedule); saveState(); return json(res, 201, publicState());
     }
     const scheduleMatch = url.pathname.match(/^\/api\/schedules\/([\w-]+)$/);

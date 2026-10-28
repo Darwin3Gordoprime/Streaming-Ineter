@@ -434,3 +434,344 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.admin-menu-toggle,
+.admin-sidebar-close {
+  display: none;
+}
+
+.alert-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.button.danger {
+  border-color: #efcaca;
+  color: #a83232;
+}
+
+@media (max-width: 760px) {
+  .admin-shell {
+    display: block;
+  }
+
+  .topbar {
+    gap: 8px;
+    padding-inline: 14px;
+  }
+
+  .admin-menu-toggle {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    margin-right: 6px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #f3f8f7;
+    color: #2b666a;
+    font-size: 19px;
+    touch-action: manipulation;
+  }
+
+  .topbar > div:first-of-type {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .topbar h1 {
+    font-size: clamp(16px, 4vw, 22px);
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    width: min(286px, calc(100vw - 48px));
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform: translateX(-105%);
+    transition: transform .25s ease;
+  }
+
+  .admin-shell.menu-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .admin-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 15;
+    background: rgba(15, 23, 42, .48);
+    touch-action: manipulation;
+  }
+
+  .admin-sidebar-close {
+    display: block;
+    align-self: flex-end;
+    width: 38px;
+    height: 38px;
+    margin: -12px -7px 8px 0;
+    border: 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .12);
+    color: #fff;
+    font-size: 25px;
+    line-height: 1;
+    touch-action: manipulation;
+  }
+
+  .admin-nav {
+    overflow-y: auto;
+  }
+
+  .alert-history-actions {
+    justify-content: flex-start;
+  }
+
+  .admin-section {
+    padding: 22px 16px 42px;
+  }
+}
+
+@media (max-width: 420px) {
+  .account-chip {
+    gap: 6px;
+  }
+
+  .account-chip>span:nth-child(2) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}
+
+.studio-suite {
+  margin-top: 16px;
+}
+
+.studio-software-tabs {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 0 12px;
+  scrollbar-width: thin;
+}
+
+.studio-software-tabs button {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f7faf9;
+  color: #42676b;
+  padding: 9px 13px;
+  font-size: 12px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+
+.studio-software-tabs button[aria-selected="true"] {
+  border-color: #178578;
+  background: #e7f4f1;
+  color: #075e57;
+}
+
+.studio-profile-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 17px;
+}
+
+.studio-profile-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.studio-profile-heading h4 {
+  margin: 0 0 5px;
+  color: #17484c;
+  font-size: 15px;
+}
+
+.studio-profile-heading p,
+.studio-destination-fieldset p,
+.studio-manual-note {
+  margin: 0;
+  color: #75878b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pill.is-active {
+  background: #e8f7ef;
+  color: #187758;
+}
+
+.studio-profile-form,
+.studio-websocket-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.studio-profile-form .wide {
+  grid-column: 1 / -1;
+}
+
+.studio-profile-form>label,
+.studio-websocket-form>label {
+  display: grid;
+  gap: 6px;
+  color: #526b70;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.studio-profile-form select,
+.studio-websocket-form input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #dbe6e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #254b50;
+  padding: 8px 10px;
+}
+
+.studio-destination-fieldset {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.studio-destination-fieldset legend {
+  padding: 0 5px;
+  color: #315d62;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.studio-destination-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.studio-destination-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid #e4eded;
+  border-radius: 8px;
+  padding: 9px;
+}
+
+.studio-destination-option input {
+  flex: none;
+  accent-color: var(--teal);
+}
+
+.studio-destination-option b,
+.studio-destination-option small {
+  display: block;
+}
+
+.studio-destination-option b {
+  overflow-wrap: anywhere;
+  color: #315d62;
+  font-size: 11px;
+}
+
+.studio-destination-option small {
+  margin-top: 3px;
+  color: #829397;
+  font-size: 10px;
+}
+
+.studio-ingest {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  border-radius: 9px;
+  background: #f4f8f8;
+  padding: 12px;
+}
+
+.studio-ingest small {
+  color: #547176;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.studio-ingest code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #244e53;
+  font-size: 11px;
+}
+
+.studio-ingest>div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.studio-profile-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.studio-websocket-form {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.studio-websocket-form .studio-profile-heading {
+  grid-column: 1 / -1;
+}
+
+.studio-manual-note {
+  margin-top: 13px;
+  border-left: 3px solid #88b8af;
+  padding: 8px 11px;
+}
+
+@media (max-width: 760px) {
+  .studio-profile-form,
+  .studio-websocket-form {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-destination-fieldset,
+  .studio-ingest,
+  .studio-profile-actions,
+  .studio-profile-form .wide,
+  .studio-websocket-form .studio-profile-heading {
+    grid-column: auto;
+  }
+
+  .studio-profile-heading {
+    flex-direction: column;
+  }
+}
